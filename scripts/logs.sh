@@ -52,9 +52,12 @@ usage() {
     exit 1
 }
 
-# Get stack name from samconfig.toml or use default
-STACK_NAME="techmoda-ai"
-if [ -f "samconfig.toml" ]; then
+# Resolver de nombre de stack: prueba $STACK_NAME (asignado por el entorno), samconfig.toml y
+# el default de la doc, y se queda con el que EXISTE. Ver scripts/lib/resolve-stack.sh.
+STACK_NAME="${STACK_NAME:-techmoda-ai}"
+if [ -f "scripts/lib/resolve-stack.sh" ]; then
+    . scripts/lib/resolve-stack.sh
+elif [ -f "samconfig.toml" ]; then
     STACK_NAME=$(grep 'stack_name' samconfig.toml | cut -d'"' -f2 || echo "techmoda-ai")
 fi
 
