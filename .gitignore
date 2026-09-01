@@ -34,3 +34,9 @@ logs/
 __pycache__/
 *.pyc
 .build/
+
+# Evidencia capturada (evidence/capture.sh). Se versionan el script y el README, NO las
+# salidas: contienen las Function URLs en vivo, y esas funciones son AuthType: NONE —
+# cualquiera con la URL puede crear y borrar productos. Ver evidence/README.md.
+evidence/00-entorno/
+evidence/S0*/
