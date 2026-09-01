@@ -21,6 +21,8 @@ Fecha: **2026-08-31**. Evidencia en [`../evidence/`](../evidence/).
 | [9](#9) | `502` al moderar, **sólo** cuando la foto se marca `FLAGGED` | S02 | ✅ `Decimal` en `moderationFlags` |
 | [10](#10) | Falta `comprehend:DetectDominantLanguage` en el snippet | S03 | ✅ acción agregada |
 | [11](#11) | El sentimiento agregado lo decidía el **orden** de las reseñas | S03 | ✅ promedio de scores |
+| [12](#12) | `AccessDeniedException` de **Comprehend** al llamar a Translate | S04 | ✅ acción downstream agregada |
+| [13](#13) | La traducción **reescribía** el nombre original en español | S04 | ✅ umbral de confianza + skip |
 
 Además: [observaciones que no son bugs](#observaciones) — incluido **por qué una etiqueta con 100 % de
 confianza puede estar mal**, que es material de examen.
@@ -507,6 +509,99 @@ que el bug de tipos de [9](#9) volvía a estar escondido en la mitad float del w
 
 **Gate.** `06-agregado-independiente-del-orden.txt` en la evidencia deja el resultado de la prueba de
 orden. `validate-all.sh` sólo verifica que el endpoint responda, no que el agregado sea correcto.
+
+---
+
+<a name="12"></a>
+## 12. S04: `TranslateText` falla por un permiso de **Comprehend**
+
+**Síntoma.** Desplegando el snippet **tal como viene** (a propósito, para medirlo):
+
+```
+An error occurred (AccessDeniedException) when calling the TranslateText operation:
+com.amazonaws.translate.dataplane.DownstreamDependencyAccessDeniedException:
+User: …/techmoda-ai-…-TranslateCatalog is not authorized to perform:
+comprehend:DetectDominantLanguage because no identity-based policy allows the
+comprehend:DetectDominantLanguage action
+```
+
+**Causa raíz.** El handler usa `SourceLanguageCode="auto"`, y con `auto` **Translate llama a Comprehend
+por dentro, usando el rol de la Lambda**. El snippet sólo concedía `translate:TranslateText`.
+
+Lo notable es la **forma** del error: la operación que falla es `TranslateText`, pero la acción negada es
+`comprehend:DetectDominantLanguage`, y AWS lo marca explícitamente como
+`DownstreamDependencyAccessDeniedException`. Es composición de servicios visible en IAM: el permiso que
+falta no es del servicio que llamás, sino del que ése llama por vos. **No se puede deducir leyendo sólo
+el nombre de la API.**
+
+**Arreglo.** Las dos acciones en el `Statement`. Igual que en [10](#10), el snippet ya lo insinuaba en su
+comentario de cierre y el `GUIA.md` lo afirmaba en la sección de mínimo privilegio — **la doc y el
+snippet se contradecían entre sí**.
+
+**Por qué se desplegó roto primero.** Convertir una afirmación de la documentación en un hecho medido.
+Salió más barato que discutirlo (un `sam deploy`, ~1 min) y dejó el texto exacto del error en
+`evidence/S04-translate-multilang/`.
+
+---
+
+<a name="13"></a>
+## 13. S04: la traducción REESCRIBÍA el nombre original en español
+
+**Síntoma.** Con `{"target":"es"}` sobre productos que **ya están en español**, uno volvió cambiado:
+
+```
+name original      : "Vestido midi floral"
+translations.es    : "Vestido midi con estampado floral"   <- reescrito por la máquina
+```
+
+Los otros tres volvieron idénticos, así que a simple vista parecía un caso raro.
+
+**Cómo se diagnosticó.** Preguntándole a Comprehend directamente qué idioma veía:
+
+```
+"Vestido midi floral"                  ->  pt 0.4481   es 0.3622
+"Vestido midi floral. Vestido midi…"   ->  pt 0.5093
+"Bolso tote de lona"                   ->  es 0.7975
+"Tenis blancos minimalistas"           ->  es 0.7864
+"Chaqueta de mezclilla oversize"       ->  es 0.9795
+```
+
+**Causa raíz.** El nombre se detecta como **portugués**. Con `auto`, Translate se queda con el idioma más
+probable **sin importar cuán probable sea** y hace una traducción real pt→es. Con
+`SourceLanguageCode="es"` explícito, el mismo texto vuelve intacto. Es determinista: 3 de 3 llamadas dan
+la misma paráfrasis.
+
+Dos cosas lo hacen peligroso:
+
+1. **Es silencioso.** La respuesta no traía el idioma detectado ni su confianza, así que una detección
+   equivocada era indistinguible de una traducción correcta.
+2. **Más texto no lo arregla.** Sumar la descripción sube la confianza **en la respuesta equivocada**
+   (0.4481 → 0.5093). La intuición "dale más contexto" falla acá.
+
+**Arreglo.** Tres cambios:
+
+- **Detectamos nosotros** con `detect_dominant_language` para poder ver el score, en vez de delegarlo a
+  `auto` a ciegas. Si no llega a `MIN_LANG_CONFIDENCE` (0.60), manda `CATALOG_SOURCE_LANG` (`es`), el
+  idioma en el que el catálogo está autorado. Los aciertos dan 0.79–0.98 y los errores 0.45–0.51, así que
+  0.60 los separa limpio — pero es un umbral **medido sobre 4 productos**, no una constante universal.
+- **Si el origen resuelto es igual al destino, no se llama a Translate.** Antes se llamaba y podía
+  devolver una paráfrasis. Además se paga por carácter, así que era gastar para empeorar el dato.
+- **La respuesta ahora dice qué asumió**: `sourceLanguage`, `sourceConfidence`,
+  `sourceFromCatalogDefault` y `translationSkipped`.
+
+Medido después del arreglo — el vestido cae al fallback y conserva su nombre:
+
+```
+Vestido midi floral      src=es conf=0.5093 fallback=True  omitido=True   -> Vestido midi floral
+Chaqueta de mezclilla…   src=es conf=0.9562 fallback=False omitido=True   -> Chaqueta de mezclilla oversize
+Vestido midi floral      src=es conf=0.5093 fallback=True  omitido=False  -> Floral midi dress
+```
+
+Y EN→ES sigue funcionando sobre texto realmente inglés: *"Ribbed knit turtleneck sweater"* se detecta
+`en` con **0.9788** y vuelve *"Jersey de cuello alto de punto acanalado"*.
+
+**Gate.** `08-invariante-es-sin-reescribir.txt` en la evidencia verifica que `translations.es` sea igual
+al `name` (`reescritos: 0`). `validate-all.sh` sólo comprueba que el endpoint responda.
 
 ---
 

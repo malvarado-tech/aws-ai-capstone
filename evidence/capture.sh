@@ -520,6 +520,128 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S03" ]; then
   info "S03 no está desplegada en este stack (falta el output AnalyzeSentimentUrl)"
 fi
 
+# ============================================================ S04 ===========
+S04URL="$(out TranslateCatalogUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S04" ]; } && [ -n "$S04URL" ]; then
+head_ "S04 · Amazon Translate (catálogo ES/EN)"
+  D="$EV/S04-translate-multilang"
+
+  cap "$D/01-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-TranslateCatalog" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,MemorySize:MemorySize,Timeout:Timeout,Tracing:TracingConfig.Mode,Env:Environment.Variables,Role:Role}' --output json
+  cap "$D/02-function-url.txt" bash -c "echo 'TranslateCatalogUrl = $S04URL/'"
+
+  # translate:TranslateText + comprehend:DetectDominantLanguage. La segunda no es
+  # opcional: Translate llama a Comprehend por dentro con ESTE rol.
+  TROLE=$(aws lambda get-function-configuration --function-name "$STACK-TranslateCatalog" \
+            --region "$REGION" --query Role --output text); TROLE=${TROLE##*/}
+  cap "$D/03-iam-dependencia-downstream.txt" bash -c "
+    echo 'rol: $TROLE'
+    aws iam get-role --role-name '$TROLE' --query 'Role.PermissionsBoundary.PermissionsBoundaryArn' --output text
+    for p in \$(aws iam list-role-policies --role-name '$TROLE' --query 'PolicyNames[]' --output text); do
+      echo
+      echo \"--- \$p\"
+      aws iam get-role-policy --role-name '$TROLE' --policy-name \"\$p\" --query 'PolicyDocument.Statement[].{Action:Action,Resource:Resource}' --output json
+    done
+  "
+
+  # La detección de idioma que motivó el umbral: los nombres cortos se detectan MAL.
+  cap "$D/04-deteccion-de-idioma.txt" python3 -c "
+import boto3, json, urllib.request
+c = boto3.client('comprehend', region_name='$REGION')
+print('Confianza de DetectDominantLanguage sobre el catálogo real.')
+print('El umbral de la Lambda es MIN_LANG_CONFIDENCE=0.60.')
+print()
+print('%-34s %-16s %s' % ('producto', 'solo name', 'name + description'))
+for p in json.load(urllib.request.urlopen('$API/products'))['products']:
+    n, d = p['name'], p.get('description','')
+    a = c.detect_dominant_language(Text=n)['Languages'][0]
+    b = c.detect_dominant_language(Text=(n + '. ' + d))['Languages'][0]
+    print('  %-32s %s %.4f        %s %.4f' % (n[:32], a['LanguageCode'], a['Score'], b['LanguageCode'], b['Score']))
+print()
+print('Ojo: mas texto NO arregla el vestido, sube la confianza en la respuesta EQUIVOCADA.')
+"
+
+  # ES->EN y ES->ES sobre los 4 productos, con la transparencia del origen.
+  cap "$D/05-traducciones.json" python3 -c "
+import json, urllib.request, sys
+api, tr = '$API', '$S04URL'
+res = {}
+for p in json.load(urllib.request.urlopen(api + '/products'))['products']:
+    if p['name'].startswith('__'): continue
+    res[p['name']] = {}
+    for target in ('en', 'es'):
+        req = urllib.request.Request(tr + '/products/' + p['productId'] + '/translate',
+                data=json.dumps({'target': target}).encode(),
+                headers={'Content-Type':'application/json'}, method='POST')
+        res[p['name']][target] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  cap "$D/06-resumen-traducciones.txt" python3 -c "
+import json, pathlib
+lines = pathlib.Path('$D/05-traducciones.json').read_text().splitlines()
+data = json.loads('\n'.join(l for l in lines if not l.startswith('#')))
+for name, porlang in data.items():
+    print(name)
+    for target, d in porlang.items():
+        print('  -> %-3s src=%s conf=%-7s fallback=%-5s omitido=%-5s' % (
+            target, d['sourceLanguage'], d['sourceConfidence'],
+            d['sourceFromCatalogDefault'], d['translationSkipped']))
+        print('       %s' % d['translation']['name'])
+        print('       %s' % d['translation']['description'][:76])
+    print()
+"
+
+  cap "$D/07-dynamodb-translations.json" aws dynamodb scan \
+        --table-name "$STACK-Products" --region "$REGION" \
+        --filter-expression "attribute_exists(translations)" \
+        --projection-expression "productId,#n,translations" \
+        --expression-attribute-names '{"#n":"name"}' --output json
+
+  # El invariante que el bug rompia: translations.es tiene que ser IGUAL al name.
+  cap "$D/08-invariante-es-sin-reescribir.txt" python3 -c "
+import boto3
+d = boto3.client('dynamodb', region_name='$REGION')
+items = d.scan(TableName='$STACK-Products',
+               ProjectionExpression='#n,translations',
+               ExpressionAttributeNames={'#n':'name'})['Items']
+print('translations.es NO debe diferir de name: el original no se reescribe.')
+print('Antes del arreglo, el vestido volvia como \"Vestido midi con estampado floral\".')
+print()
+malos = 0
+for it in items:
+    n = it['name']['S']
+    tr = it.get('translations', {}).get('M', {})
+    es = tr.get('es', {}).get('M', {}).get('name', {}).get('S')
+    if es is None: continue
+    estado = 'ok' if es == n else 'REESCRITO'
+    malos += es != n
+    print('  %-9s %-34s es=%s' % (estado, n[:34], es))
+print()
+print('reescritos: %d' % malos)
+"
+
+  cap "$D/09-cobertura-translations.txt" bash -c "
+    echo -n 'productos con translations: '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' \
+      --filter-expression 'attribute_exists(translations)' --select COUNT --query Count --output text
+    echo -n 'productos totales:          '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' --select COUNT --query Count --output text
+  "
+
+  cap "$D/10-cloudwatch-logs.txt" bash -c "
+    aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/$STACK-TranslateCatalog' \
+      --region '$REGION' --query 'logGroups[].[logGroupName,retentionInDays]' --output text
+    echo '--- últimos eventos'
+    aws logs filter-log-events --log-group-name '/aws/lambda/$STACK-TranslateCatalog' --region '$REGION' \
+      --start-time \$(( (\$(date -u +%s) - 3600) * 1000 )) \
+      --query 'events[-25:].message' --output text 2>/dev/null | cut -c1-200
+  "
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S04" ]; then
+  info "S04 no está desplegada en este stack (falta el output TranslateCatalogUrl)"
+fi
+
 # ================================================ SESIONES PENDIENTES =======
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"

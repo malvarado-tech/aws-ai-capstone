@@ -171,6 +171,42 @@ Resources:
           AllowMethods: [ "*" ]
           AllowHeaders: [ "*" ]
 
+  TranslateCatalogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-TranslateCatalog
+      Description: S4 - Catalogo multilingue ES/EN (Amazon Translate)
+      CodeUri: sessions/S04-translate-multilang/functions/translate-catalog
+      Handler: app.lambda_handler
+      Runtime: python3.12          # override del Runtime global (nodejs22.x)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        # DOS acciones, y la segunda no es obvia: el handler usa
+        # SourceLanguageCode="auto", y con "auto" Translate llama a Comprehend
+        # POR DENTRO usando ESTE rol. Sin el permiso, TranslateText falla con
+        # DownstreamDependencyAccessDeniedException — verificado desplegando el
+        # snippet tal como venía. Es composición de servicios visible en IAM.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - translate:TranslateText
+                - comprehend:DetectDominantLanguage
+              Resource: "*"
+      Environment:
+        Variables:
+          # Idioma en el que está autorado el catálogo: fallback cuando la detección
+          # automática no alcanza el umbral. Medido: "Vestido midi floral" se detecta
+          # como PORTUGUES con 0.45-0.51, y los aciertos dan 0.79-0.98.
+          CATALOG_SOURCE_LANG: "es"
+          MIN_LANG_CONFIDENCE: "0.60"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
   # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
@@ -244,6 +280,9 @@ Outputs:
   AnalyzeSentimentUrl:
     Description: S3 Function URL (Comprehend). POST /sentiment con {"text"} o {"reviews","productId"}
     Value: !GetAtt AnalyzeSentimentFunctionUrl.FunctionUrl
+  TranslateCatalogUrl:
+    Description: S4 Function URL (Amazon Translate). POST /products/{id}/translate {"target":"en"}
+    Value: !GetAtt TranslateCatalogFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable

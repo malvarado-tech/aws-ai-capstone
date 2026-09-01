@@ -93,6 +93,26 @@ que lo generó. Se puede volver a correr y diffear.
 **no** depende del orden de las reseñas — ver
 [`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#11).
 
+### `S04-translate-multilang/` — Amazon Translate
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-lambda-config.json` | `python3.12`, `CATALOG_SOURCE_LANG=es`, `MIN_LANG_CONFIDENCE=0.60` |
+| `02-function-url.txt` | la Function URL propia de la sesión (`TranslateCatalogUrl`) |
+| `03-iam-dependencia-downstream.txt` | `translate:TranslateText` **+** `comprehend:DetectDominantLanguage` — Translate llama a Comprehend con **este** rol |
+| `04-deteccion-de-idioma.txt` | la confianza real por producto: el vestido da **`pt` 0.45–0.51**, los otros `es` 0.79–0.98 |
+| `05-traducciones.json` | ES→EN y ES→ES de los 4 productos, respuesta cruda |
+| `06-resumen-traducciones.txt` | lo mismo legible, con `sourceLanguage` / `fallback` / `omitido` |
+| `07-dynamodb-translations.json` | el mapa anidado `translations.{en,es}.{name,description}` |
+| `08-invariante-es-sin-reescribir.txt` | **`translations.es` == `name`** (`reescritos: 0`) |
+| `09-cobertura-translations.txt` | 4 de 4 productos traducidos |
+| `10-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
+
+`04-…` es la medición que motivó el umbral, y `08-…` el invariante que el bug rompía: la traducción
+`es→es` devolvía *"Vestido midi con estampado floral"* y **sobrescribía el nombre canónico**. Detalle en
+[`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#13); el `AccessDenied` de Comprehend disparado
+por Translate, en [#12](../docs/TROUBLESHOOTING.md#12).
+
 `S02/06-…` es lo que justifica el umbral con datos: la señal de moderación más alta en fotos de catálogo
 normales es **0.95 %**, contra un umbral de 60. Y ojo con `05-…`: los cuatro dan `APPROVED`, así que esa
 evidencia **no cubre la rama `FLAGGED`** — el procedimiento para ejercitarla está en
