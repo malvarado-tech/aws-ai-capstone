@@ -71,6 +71,43 @@ Resources:
             - "*"
 
   # ---------------------------------------------------------------------------
+  # S1 · Rekognition DetectLabels — auto-etiquetado de fotos de producto.
+  # Pegado desde sessions/S01-rekognition-labels/template-snippet.yaml.
+  # Patrón: Function URL propia + Policies: propias (SAM le crea el rol).
+  # Rekognition se acota por ACCIÓN: las APIs Detect* no admiten ARN de recurso.
+  # ---------------------------------------------------------------------------
+  EnrichLabelsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-EnrichLabels
+      Description: S1 - Auto-etiquetado de imagenes de producto (Rekognition DetectLabels)
+      CodeUri: sessions/S01-rekognition-labels/functions/enrich-labels
+      Handler: app.lambda_handler
+      Runtime: python3.12          # override del Runtime global (nodejs22.x)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        - Statement:
+            - Effect: Allow
+              Action: rekognition:DetectLabels
+              Resource: "*"
+        # Si imageUrl es s3://, Rekognition lee el objeto con ESTE rol.
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-*/*
+      Environment:
+        Variables:
+          LABEL_MIN_CONFIDENCE: "80"
+          LABEL_MAX_LABELS: "15"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
+  # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
   FrontendBucket:
@@ -134,6 +171,9 @@ Outputs:
   ApiUrl:
     Description: Base API URL (Lambda Function URL del router CRUD). Termina en '/'.
     Value: !GetAtt RouterFunctionUrl.FunctionUrl
+  EnrichLabelsUrl:
+    Description: S1 Function URL (Rekognition DetectLabels). POST /products/{id}/labels
+    Value: !GetAtt EnrichLabelsFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable
