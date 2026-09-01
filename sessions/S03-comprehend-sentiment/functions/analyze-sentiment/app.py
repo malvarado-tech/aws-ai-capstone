@@ -17,6 +17,7 @@ Dominio AIF-C01: D1 — Fundamentals of AI and ML (procesamiento de lenguaje nat
 import json
 import os
 from collections import Counter
+from decimal import Decimal
 
 import boto3
 
@@ -59,6 +60,33 @@ def _analyze_one(text):
     }
 
 
+def _aggregate(results):
+    """Sentimiento agregado del producto, promediando los SCORES (no contando etiquetas).
+
+    Por qué no `Counter(...).most_common(1)`, que era la version anterior: con dos reseñas,
+    una POSITIVE y una NEGATIVE, hay empate 1-1 y `most_common` devuelve la primera que se
+    insertó — o sea que **el veredicto lo decidía el ORDEN de las reseñas**. Medido: las
+    mismas dos reseñas del bolso dan POSITIVE si la buena va primera y NEGATIVE si va
+    segunda. Un producto al que se le descosió el asa aparecía como POSITIVE.
+
+    Promediar los scores usa la información que la etiqueta tira a la basura: una reseña
+    NEGATIVE con 0.9998 pesa más que una POSITIVE con 0.51, que es justo lo que uno quiere
+    para priorizar qué producto necesita atención.
+
+    El desempate sigue la misma lógica de gobernanza que el umbral de S2: ante la duda,
+    preferimos la etiqueta que llama a una persona antes que la que tranquiliza.
+    """
+    keys = ("Positive", "Negative", "Neutral", "Mixed")
+    n = len(results) or 1
+    avg = {k: sum(r["scores"].get(k, 0.0) for r in results) / n for k in keys}
+    mejor = max(avg.values())
+    # Desempate explícito y determinista: primero lo que exige atención.
+    for k in ("Negative", "Mixed", "Positive", "Neutral"):
+        if avg[k] == mejor:
+            return k.upper(), {k2: round(v, 4) for k2, v in avg.items()}
+    return "NEUTRAL", {k: round(v, 4) for k, v in avg.items()}
+
+
 def lambda_handler(event, context):
     print("Event:", json.dumps(event))
     try:
@@ -77,17 +105,23 @@ def lambda_handler(event, context):
 
     results = [_analyze_one(t) for t in texts]
 
-    # Sentimiento agregado: el más frecuente.
     tally = Counter(r["sentiment"] for r in results)
-    overall = tally.most_common(1)[0][0]
+    overall, avg = _aggregate(results)
 
     product_id = body.get("productId")
     if product_id and len(results) > 0:
         try:
+            # DynamoDB NO acepta float -> los promedios van como Decimal. Mismo caso que
+            # S1 y S2; acá tampoco se ve venir, porque reviewSentimentCounts son enteros
+            # y sólo los scores promediados son float.
+            avg_ddb = {k: Decimal(str(v)) for k, v in avg.items()}
             table.update_item(
                 Key={"productId": product_id},
-                UpdateExpression="SET reviewSentiment = :s, reviewSentimentCounts = :c",
-                ExpressionAttributeValues={":s": overall, ":c": dict(tally)},
+                UpdateExpression=(
+                    "SET reviewSentiment = :s, reviewSentimentCounts = :c, "
+                    "reviewSentimentScores = :a"
+                ),
+                ExpressionAttributeValues={":s": overall, ":c": dict(tally), ":a": avg_ddb},
             )
         except Exception as e:  # noqa: BLE001
             print("DDB update warn:", repr(e))
@@ -97,7 +131,10 @@ def lambda_handler(event, context):
         {
             "count": len(results),
             "overallSentiment": overall,
+            # distribution = cuántas reseñas de cada clase (para mostrar).
+            # averageScores = en qué se basa overallSentiment (para justificarlo).
             "distribution": dict(tally),
+            "averageScores": avg,
             "results": results,
         },
     )

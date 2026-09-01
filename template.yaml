@@ -143,6 +143,34 @@ Resources:
           AllowMethods: [ "*" ]
           AllowHeaders: [ "*" ]
 
+  AnalyzeSentimentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-AnalyzeSentiment
+      Description: S3 - Sentimiento de resenas (Amazon Comprehend)
+      CodeUri: sessions/S03-comprehend-sentiment/functions/analyze-sentiment
+      Handler: app.lambda_handler
+      Runtime: python3.12          # override del Runtime global (nodejs22.x)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        # DOS acciones: el handler es un pipeline de dos pasos. DetectSentiment
+        # exige un LanguageCode explícito, así que primero hay que detectarlo.
+        # El snippet original sólo traía DetectSentiment y la primera llamada moría
+        # con AccessDeniedException — mínimo privilegio funcionando como se espera.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - comprehend:DetectDominantLanguage
+                - comprehend:DetectSentiment
+              Resource: "*"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
   # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
@@ -213,6 +241,9 @@ Outputs:
   ModerateImageUrl:
     Description: S2 Function URL (moderacion + alt-text). POST /products/{id}/moderate
     Value: !GetAtt ModerateImageFunctionUrl.FunctionUrl
+  AnalyzeSentimentUrl:
+    Description: S3 Function URL (Comprehend). POST /sentiment con {"text"} o {"reviews","productId"}
+    Value: !GetAtt AnalyzeSentimentFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable

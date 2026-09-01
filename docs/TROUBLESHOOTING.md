@@ -19,6 +19,8 @@ Fecha: **2026-08-31**. Evidencia en [`../evidence/`](../evidence/).
 | [7](#7) | Evidencia de X-Ray contaminada | evidencia | ✅ `--filter-expression` |
 | [8](#8) | `$STACK_NAME` y `samconfig.toml` discrepan | todas | ✅ resolver único |
 | [9](#9) | `502` al moderar, **sólo** cuando la foto se marca `FLAGGED` | S02 | ✅ `Decimal` en `moderationFlags` |
+| [10](#10) | Falta `comprehend:DetectDominantLanguage` en el snippet | S03 | ✅ acción agregada |
+| [11](#11) | El sentimiento agregado lo decidía el **orden** de las reseñas | S03 | ✅ promedio de scores |
 
 Además: [observaciones que no son bugs](#observaciones) — incluido **por qué una etiqueta con 100 % de
 confianza puede estar mal**, que es material de examen.
@@ -427,6 +429,84 @@ buscar contenido ofensivo**, y conviene dejarlo como paso de la sesión.
 
 **Gate.** `validate-all.sh` prueba S02 con `probar_ia`, pero contra una foto normal → sólo cubre
 `APPROVED`. La rama `FLAGGED` **no tiene gate automático**; el procedimiento de arriba es manual.
+
+---
+
+<a name="10"></a>
+## 10. S03: el snippet no concede `comprehend:DetectDominantLanguage`
+
+**Síntoma.** Detectado leyendo, antes de desplegar. `template-snippet.yaml` de S03 concede una sola
+acción:
+
+```yaml
+Action: comprehend:DetectSentiment
+```
+
+pero `app.py` llama **dos** APIs: `detect_dominant_language()` y después `detect_sentiment()`. La primera
+llamada del handler habría muerto con `AccessDeniedException`.
+
+**Causa raíz.** El propio snippet lo admite en su comentario de cierre — *"agregá
+DetectDominantLanguage si lo usás"* — y el handler lo usa. El pipeline de dos pasos existe porque
+`DetectSentiment` **exige** un `LanguageCode` explícito: no se puede hardcodear `es` si el cliente
+escribe en inglés.
+
+**Arreglo.** Las dos acciones en el mismo `Statement`:
+
+```yaml
+Action:
+  - comprehend:DetectDominantLanguage
+  - comprehend:DetectSentiment
+```
+
+**Lo que enseña.** Es mínimo privilegio funcionando **como se espera**: el rol no puede hacer nada que
+nadie concedió explícitamente, así que una llamada no listada falla fuerte y temprano en vez de pasar
+inadvertida. Con `comprehend:*` no habría pasado nada — y no habríamos aprendido que la feature son dos
+llamadas. **Al agregar una sesión, contá las llamadas del handler, no las del título.**
+
+---
+
+<a name="11"></a>
+## 11. S03: el sentimiento agregado lo decidía el ORDEN de las reseñas
+
+**Síntoma.** Los cuatro productos daban `overallSentiment: POSITIVE`, incluido el bolso cuya reseña dice
+*"La costura del asa se descosió a la semana, decepcionante"* con `NEGATIVE` **0.9998**. El objetivo de la
+sesión es justamente **priorizar qué productos necesitan atención**, así que el resultado era inútil.
+
+**Cómo se diagnosticó.** Mandando las **mismas dos reseñas** en los dos órdenes posibles:
+
+```
+positiva primero   -> overall=POSITIVE   distribucion={'POSITIVE': 1, 'NEGATIVE': 1}
+negativa primero   -> overall=NEGATIVE   distribucion={'NEGATIVE': 1, 'POSITIVE': 1}
+```
+
+**Causa raíz.** El agregado era `Counter(...).most_common(1)[0][0]`. Con dos reseñas de clases distintas
+hay **empate 1-1**, y `most_common` desempata por **orden de inserción** — o sea por el orden en que
+llegaron las reseñas. Con dos reseñas (lo que trae el seed) el empate es el caso **normal**, no el raro.
+
+**Arreglo.** Promediar los **scores** en vez de contar etiquetas (`_aggregate()`):
+
+```
+Bolso tote de lona    NEGATIVE   P=0.498  N=0.500   <- gana por 0.002, y es correcto
+Vestido midi floral   POSITIVE   P=0.578  N=0.379
+Tenis blancos         POSITIVE   P=0.597  Mix=0.402
+Chaqueta de mezclilla POSITIVE   P=0.501  Mix=0.497
+```
+
+Promediar usa la información **que la etiqueta tira a la basura**: una reseña `NEGATIVE` con 0.9998 pesa
+más que una `POSITIVE` con 0.51. El desempate exacto es explícito y determinista, en orden
+`Negative → Mixed → Positive → Neutral`: la misma lógica de gobernanza que el umbral 60 de S02 — ante la
+duda, la etiqueta que llama a una persona antes que la que tranquiliza.
+
+Se agrega `reviewSentimentScores` al item (y a la respuesta como `averageScores`) porque sin los
+promedios el veredicto es imposible de justificar: `NEGATIVE` con 0.500 vs 0.498 es un empate técnico que
+merece leerse, no un rechazo rotundo.
+
+**Ojo, el mismo `Decimal` de nuevo.** Los promedios son `float` y `reviewSentimentCounts` son enteros, así
+que el bug de tipos de [9](#9) volvía a estar escondido en la mitad float del write-back. Convertidos con
+`Decimal(str(v))` desde el principio esta vez.
+
+**Gate.** `06-agregado-independiente-del-orden.txt` en la evidencia deja el resultado de la prueba de
+orden. `validate-all.sh` sólo verifica que el endpoint responda, no que el agregado sea correcto.
 
 ---
 

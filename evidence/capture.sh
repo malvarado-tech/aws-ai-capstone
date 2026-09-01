@@ -411,6 +411,115 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S02" ]; then
   info "S02 no está desplegada en este stack (falta el output ModerateImageUrl)"
 fi
 
+# ============================================================ S03 ===========
+S03URL="$(out AnalyzeSentimentUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S03" ]; } && [ -n "$S03URL" ]; then
+head_ "S03 · Comprehend DetectSentiment"
+  D="$EV/S03-comprehend-sentiment"
+
+  cap "$D/01-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-AnalyzeSentiment" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,MemorySize:MemorySize,Timeout:Timeout,Tracing:TracingConfig.Mode,Env:Environment.Variables,Role:Role}' --output json
+  cap "$D/02-function-url.txt" bash -c "echo 'AnalyzeSentimentUrl = $S03URL/'"
+
+  # DOS acciones de Comprehend: el snippet original traía sólo DetectSentiment y la
+  # primera llamada moría con AccessDeniedException, porque el handler es un pipeline.
+  SROLE=$(aws lambda get-function-configuration --function-name "$STACK-AnalyzeSentiment" \
+            --region "$REGION" --query Role --output text); SROLE=${SROLE##*/}
+  cap "$D/03-iam-pipeline-dos-acciones.txt" bash -c "
+    echo 'rol: $SROLE'
+    aws iam get-role --role-name '$SROLE' --query 'Role.PermissionsBoundary.PermissionsBoundaryArn' --output text
+    for p in \$(aws iam list-role-policies --role-name '$SROLE' --query 'PolicyNames[]' --output text); do
+      echo
+      echo \"--- \$p\"
+      aws iam get-role-policy --role-name '$SROLE' --policy-name \"\$p\" --query 'PolicyDocument.Statement[].{Action:Action,Resource:Resource}' --output json
+    done
+  "
+
+  # Casos que prueban el comportamiento del modelo, no sólo que la llamada ande.
+  cap "$D/04-casos-de-sentimiento.txt" python3 -c "
+import json, urllib.request
+url = '$S03URL/sentiment'
+casos = [
+  ('positiva es',      'Me encantó la tela y el corte, llegó rapidísimo. Lo volvería a comprar.'),
+  ('negativa en',      'The fabric feels cheap and it arrived three weeks late. Very disappointed.'),
+  ('negacion',         'No está nada mal.'),
+  ('mixta',            'Excelente calidad pero el envío tardó tres semanas y llegó sucio.'),
+  ('factual',          'El paquete llegó el martes.'),
+]
+for etiqueta, t in casos:
+    req = urllib.request.Request(url, data=json.dumps({'text': t}).encode(),
+                                 headers={'Content-Type':'application/json'}, method='POST')
+    r = json.load(urllib.request.urlopen(req))['results'][0]
+    s = r['scores']
+    print('%-12s %-9s lang=%-3s P=%.4f N=%.4f Neu=%.4f Mix=%.4f' % (
+        etiqueta, r['sentiment'], r['language'], s['Positive'], s['Negative'], s['Neutral'], s['Mixed']))
+    print('             %s' % t)
+"
+
+  # El agregado por producto, con las 8 reseñas del seed.
+  cap "$D/05-agregado-por-producto.json" python3 -c "
+import json, urllib.request, sys
+api, url = '$API', '$S03URL'
+seed = json.load(open('ai/seed/seed-products.json'))
+seed = seed if isinstance(seed, list) else seed.get('products', seed)
+reviews = {p['name']: p.get('reviews', []) for p in seed}
+res = {}
+for p in json.load(urllib.request.urlopen(api + '/products'))['products']:
+    rv = reviews.get(p['name'], [])
+    if not rv: continue
+    req = urllib.request.Request(url + '/sentiment',
+            data=json.dumps({'productId': p['productId'], 'reviews': rv}).encode(),
+            headers={'Content-Type':'application/json'}, method='POST')
+    res[p['name']] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  # La prueba que encontró el bug: el veredicto NO debe depender del orden.
+  cap "$D/06-agregado-independiente-del-orden.txt" python3 -c "
+import json, urllib.request
+url = '$S03URL/sentiment'
+pos = 'Espacioso y bonito, ideal para el día a día.'
+neg = 'La costura del asa se descosió a la semana, decepcionante.'
+print('Las MISMAS dos reseñas en los dos ordenes posibles.')
+print('Con el agregado viejo (Counter.most_common) esto daba POSITIVE y NEGATIVE:')
+print('el empate 1-1 lo desempataba el ORDEN de las reseñas.')
+print()
+for etiqueta, orden in [('positiva primero', [pos, neg]), ('negativa primero', [neg, pos])]:
+    req = urllib.request.Request(url, data=json.dumps({'reviews': orden}).encode(),
+                                 headers={'Content-Type':'application/json'}, method='POST')
+    d = json.load(urllib.request.urlopen(req))
+    a = d['averageScores']
+    print('%-18s -> %-9s  P=%.4f N=%.4f Neu=%.4f Mix=%.4f  conteo=%s' % (
+        etiqueta, d['overallSentiment'], a['Positive'], a['Negative'], a['Neutral'], a['Mixed'], d['distribution']))
+"
+
+  cap "$D/07-dynamodb-sentimiento.json" aws dynamodb scan \
+        --table-name "$STACK-Products" --region "$REGION" \
+        --filter-expression "attribute_exists(reviewSentiment)" \
+        --projection-expression "productId,#n,reviewSentiment,reviewSentimentCounts,reviewSentimentScores" \
+        --expression-attribute-names '{"#n":"name"}' --output json
+
+  cap "$D/08-cobertura-sentimiento.txt" bash -c "
+    echo -n 'productos con reviewSentiment: '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' \
+      --filter-expression 'attribute_exists(reviewSentiment)' --select COUNT --query Count --output text
+    echo -n 'productos totales:             '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' --select COUNT --query Count --output text
+  "
+
+  cap "$D/09-cloudwatch-logs.txt" bash -c "
+    aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/$STACK-AnalyzeSentiment' \
+      --region '$REGION' --query 'logGroups[].[logGroupName,retentionInDays]' --output text
+    echo '--- últimos eventos'
+    aws logs filter-log-events --log-group-name '/aws/lambda/$STACK-AnalyzeSentiment' --region '$REGION' \
+      --start-time \$(( (\$(date -u +%s) - 3600) * 1000 )) \
+      --query 'events[-25:].message' --output text 2>/dev/null | cut -c1-200
+  "
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S03" ]; then
+  info "S03 no está desplegada en este stack (falta el output AnalyzeSentimentUrl)"
+fi
+
 # ================================================ SESIONES PENDIENTES =======
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"

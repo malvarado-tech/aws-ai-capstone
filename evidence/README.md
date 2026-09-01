@@ -74,7 +74,26 @@ que lo generó. Se puede volver a correr y diffear.
 | `08-cobertura-moderacion.txt` | 4 de 4 productos moderados y con alt-text |
 | `09-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
 
-`06-…` es lo que justifica el umbral con datos: la señal de moderación más alta en fotos de catálogo
+### `S03-comprehend-sentiment/` — Comprehend `DetectSentiment`
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-lambda-config.json` | `python3.12`, sin variables de umbral (esta API **no tiene** knobs) |
+| `02-function-url.txt` | la Function URL propia de la sesión (`AnalyzeSentimentUrl`) |
+| `03-iam-pipeline-dos-acciones.txt` | `DetectDominantLanguage` **+** `DetectSentiment` — la feature son dos llamadas |
+| `04-casos-de-sentimiento.txt` | 5 casos: positiva es, negativa **en** (idioma detectado solo), negación, mixta y factual |
+| `05-agregado-por-producto.json` | el agregado de las 8 reseñas del seed, con `averageScores` |
+| `06-agregado-independiente-del-orden.txt` | **la prueba que encontró el bug**: mismas reseñas, dos órdenes, mismo veredicto |
+| `07-dynamodb-sentimiento.json` | el write-back: `reviewSentiment` + `reviewSentimentCounts` + `reviewSentimentScores` |
+| `08-cobertura-sentimiento.txt` | 4 de 4 productos con sentimiento agregado |
+| `09-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
+
+`04-…` es el argumento de por qué ML y no reglas: *"No está nada mal"* sale `POSITIVE` con 0.9418 pese al
+"no", y una lista de palabras prohibidas lo habría marcado negativo. `06-…` documenta que el agregado ya
+**no** depende del orden de las reseñas — ver
+[`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#11).
+
+`S02/06-…` es lo que justifica el umbral con datos: la señal de moderación más alta en fotos de catálogo
 normales es **0.95 %**, contra un umbral de 60. Y ojo con `05-…`: los cuatro dan `APPROVED`, así que esa
 evidencia **no cubre la rama `FLAGGED`** — el procedimiento para ejercitarla está en
 [`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#9), junto con el bug de `Decimal` que sólo
