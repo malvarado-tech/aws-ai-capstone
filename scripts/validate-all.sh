@@ -9,10 +9,11 @@
 # Pensado para que un estudiante sepa exactamente qué está roto y dónde, sin
 # tener que leer stack traces. Sin `set -e`: corremos TODO y damos un resumen.
 
-STACK="${STACK_NAME:-techmoda-ai}"
 REGION="${AWS_REGION:-us-east-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
+
+STACK="${STACK_NAME:-techmoda-ai}"
 
 MODO="ambos"
 case "${1:-}" in
@@ -21,6 +22,16 @@ case "${1:-}" in
   -h|--help)
     sed -n '3,10p' "$0" | sed 's/^# \?//'; exit 0 ;;
 esac
+
+# El nombre del stack tiene tres fuentes que discrepan ($STACK_NAME del entorno,
+# samconfig.toml, y el default de la doc). El resolver se queda con la que EXISTE, así este
+# gate no reporta "el stack no existe" mientras el stack está desplegado con otro nombre.
+# Se sourcea SÓLO fuera de --static: consulta CloudFormation, y --static tiene que seguir
+# corriendo sin credenciales (es su única razón de ser).
+if [ "$MODO" != "static" ] && [ -f scripts/lib/resolve-stack.sh ]; then
+  . scripts/lib/resolve-stack.sh
+  STACK="$STACK_NAME"
+fi
 
 PASS=0; FAIL=0; SKIP=0
 pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
@@ -54,8 +65,20 @@ titulo "2. Templates SAM"
 
 titulo "3. Snippets de sesión (se pegan en template.yaml y validan)"
   # Reproduce exactamente lo que hace el estudiante: pegar el snippet en Resources.
+  #
+  # Ojo con la ruta progresiva: una vez que el estudiante COMPLETA una sesión, su recurso
+  # ya vive en template.yaml. Volver a pegar el snippet daría "Duplicate found <LogicalId>"
+  # y la sesión terminada se vería como un fallo — cada sesión completada rompería una
+  # línea de esta sección. Así que primero detectamos si ya está integrada: en ese caso el
+  # splice no aplica y lo que vale es que template.yaml valide (sección 2).
   for snip in sessions/S0*/template-snippet.yaml; do
     SESS="$(basename "$(dirname "$snip")")"
+    # LogicalId del primer recurso del snippet (S07 declara dos; con el primero basta).
+    LID="$(grep -m1 -E '^  [A-Za-z0-9]+:' "$snip" | tr -d ' :')"
+    if [ -n "$LID" ] && grep -qE "^  ${LID}:[[:space:]]*$" template.yaml; then
+      pass "$SESS (ya integrada en template.yaml)"
+      continue
+    fi
     TMP="$(mktemp /tmp/splice-XXXXXX.yaml)"
     python3 - "$snip" "$TMP" <<'PY'
 import sys, pathlib
@@ -104,7 +127,7 @@ titulo "5. Frontend"
 titulo "6. Coherencia del repo"
   # La región debe ser una sola en todo el repo.
   OTRA="$(grep -rIl 'us-west-2' . --exclude-dir=.git --exclude-dir=.aws-sam \
-          --exclude-dir=node_modules --exclude-dir=dist \
+          --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=evidence \
           --exclude='EPCC_*.md' --exclude='validate-all.sh' 2>/dev/null)"
   [ -z "$OTRA" ] && pass "región consistente (us-east-1)" \
                  || fallo "quedan referencias a us-west-2" "$(echo "$OTRA" | tr '\n' ' ')"
@@ -134,6 +157,9 @@ titulo "6. Coherencia del repo"
   # vivas en 39 archivos de docs: el estudiante seguía pasos que ya no aplicaban.
   # Se permiten las menciones marcadas como contexto histórico (docs/IAM.md
   # "Nota histórica", docs/SANDBOX-COMPAT.md §3 y los avisos que las citan).
+  # evidence/ queda excluido de TODOS los greps de coherencia: es salida capturada de
+  # comandos, no documentación escrita. Sin excluirlo, este mismo script se auto-delata
+  # (imprime "sin LabRoleArn ..." y esa línea queda dentro de evidence/…/validate-all.txt).
   DOCS_OK="docs/IAM.md docs/SANDBOX-COMPAT.md QUICKSTART.md sessions/README.md sessions/S00-base/GUIA.md"
   DOC_STALE=""
   while IFS= read -r f; do
@@ -141,7 +167,8 @@ titulo "6. Coherencia del repo"
     DOC_STALE="$DOC_STALE ${f#./}"
   done <<EOF
 $(grep -rIl 'LabRole' . --exclude-dir=.git --exclude-dir=.aws-sam --exclude-dir=node_modules \
-    --exclude-dir=dist --exclude='EPCC_*.md' --exclude='validate-all.sh' 2>/dev/null)
+    --exclude-dir=dist --exclude-dir=evidence \
+    --exclude='EPCC_*.md' --exclude='validate-all.sh' 2>/dev/null)
 EOF
   [ -z "$DOC_STALE" ] && pass "la documentación no promete el modelo IAM viejo" \
     || fallo "docs que todavía mandan usar LabRole" "$DOC_STALE"
@@ -161,6 +188,21 @@ EOF
   else
     pass "model ID de Bedrock único y versionado ($IDS)"
   fi
+
+  # CORS lo emite UNA sola capa: el FunctionUrlConfig.Cors del template. Si un handler
+  # tambien mete sus Access-Control-*, la respuesta llega al navegador con DOS headers
+  # Access-Control-Allow-Origin (el '*' del handler + el Origin reflejado por la Function
+  # URL) y el navegador la rechaza: "Failed to fetch". curl NO lo detecta porque no manda
+  # Origin, asi que este check estatico es la unica red antes del navegador.
+  CORSDUP=""
+  for f in functions/*/index.js sessions/*/functions/*/app.py; do
+    [ -f "$f" ] || continue
+    # se ignoran las lineas de comentario (// y #), que si explican el tema
+    HIT="$(grep -nE 'Access-Control-Allow' "$f" | grep -vE '^[0-9]+: *(//|#)')"
+    [ -n "$HIT" ] && CORSDUP="$CORSDUP $f:$(echo "$HIT" | cut -d: -f1 | tr '\n' ',')"
+  done
+  [ -z "$CORSDUP" ] && pass "ningun handler emite CORS (lo hace FunctionUrlConfig.Cors)" \
+                    || fallo "un handler emite Access-Control-* -> doble header en el navegador" "$CORSDUP"
 
   # El contrato de campos: el frontend debe usar camelCase como el backend.
   SNAKE="$(grep -rIl 'product_id\|image_url' frontend/src 2>/dev/null)"
@@ -217,6 +259,18 @@ titulo "9. CRUD (S00)"
     else
       fallo "GET /products" "$BODY"
     fi
+
+    # CORS como lo ve un navegador de verdad: hay que MANDAR Origin. Sin ese header la
+    # Function URL no agrega su Access-Control-Allow-Origin y el doble header no aparece
+    # -> todos los curl de este script daban verde con el frontend roto.
+    NACAO="$(curl -sS -D - -o /dev/null --max-time 25 -H "Origin: https://example.com" \
+             "$API/products" 2>/dev/null | grep -ci 'access-control-allow-origin')"
+    case "$NACAO" in
+      1) pass "CORS: un solo Access-Control-Allow-Origin con Origin presente" ;;
+      0) fallo "CORS: la respuesta no trae Access-Control-Allow-Origin" "revisá FunctionUrlConfig.Cors en el template" ;;
+      *) fallo "CORS: $NACAO headers Access-Control-Allow-Origin (el navegador da 'Failed to fetch')" \
+               "el handler emite CORS además del FunctionUrlConfig.Cors — dejá que lo emita solo la plataforma" ;;
+    esac
 
     # Ciclo completo create -> get -> update -> delete sobre un producto de prueba.
     NEW=$(curl -fsS --max-time 25 -X POST "$API/products" -H 'Content-Type: application/json' \
