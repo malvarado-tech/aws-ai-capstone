@@ -107,6 +107,42 @@ Resources:
           AllowMethods: [ "*" ]
           AllowHeaders: [ "*" ]
 
+  ModerateImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ModerateImage
+      Description: S2 - Moderacion de imagen + alt-text accesible (Rekognition)
+      CodeUri: sessions/S02-moderation-alttext/functions/moderate-image
+      Handler: app.lambda_handler
+      Runtime: python3.12          # override del Runtime global (nodejs22.x)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        # Dos acciones, no rekognition:*. Este rol puede moderar y etiquetar;
+        # el de EnrichLabels (S1) NO puede moderar. Mismo servicio, límites distintos.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:DetectModerationLabels
+                - rekognition:DetectLabels
+              Resource: "*"
+        # Si imageUrl es s3://, Rekognition lee el objeto con ESTE rol.
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-*/*
+      Environment:
+        Variables:
+          # 60, más bajo que el 80 de etiquetado: ante la duda preferimos FLAGGED y
+          # revisión humana. Es una decisión de gobernanza, no técnica (D4).
+          MODERATION_MIN_CONFIDENCE: "60"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
   # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
@@ -174,6 +210,9 @@ Outputs:
   EnrichLabelsUrl:
     Description: S1 Function URL (Rekognition DetectLabels). POST /products/{id}/labels
     Value: !GetAtt EnrichLabelsFunctionUrl.FunctionUrl
+  ModerateImageUrl:
+    Description: S2 Function URL (moderacion + alt-text). POST /products/{id}/moderate
+    Value: !GetAtt ModerateImageFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable

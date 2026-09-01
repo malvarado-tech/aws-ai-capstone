@@ -16,6 +16,7 @@ Dominio AIF-C01: D4 — Guidelines for Responsible AI (seguridad del contenido +
 import json
 import os
 import urllib.request
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import boto3
@@ -112,10 +113,19 @@ def lambda_handler(event, context):
     status = "FLAGGED" if flags else "APPROVED"
     alt_text = _build_alt_text(labels_resp.get("Labels", []), item.get("name", ""))
 
+    # DynamoDB NO acepta float -> el Confidence va como Decimal (mismo caso que S1).
+    # Ojo por qué este bug es traicionero: con una foto normal `flags` queda VACÍA, no se
+    # escribe ningún número y todo parece funcionar. Sólo explota cuando algo se marca
+    # FLAGGED, o sea justo en el camino que le da sentido a la sesión: la Lambda devolvía
+    # 502 y el producto quedaba sin moderar en silencio.
+    flags_ddb = [
+        {"name": f["name"], "parent": f["parent"], "confidence": Decimal(str(f["confidence"]))}
+        for f in flags
+    ]
     table.update_item(
         Key={"productId": product_id},
         UpdateExpression="SET moderationStatus = :s, moderationFlags = :f, altText = :a",
-        ExpressionAttributeValues={":s": status, ":f": flags, ":a": alt_text},
+        ExpressionAttributeValues={":s": status, ":f": flags_ddb, ":a": alt_text},
     )
 
     return _response(
