@@ -15,6 +15,10 @@ const dynamodb = DynamoDBDocumentClient.from(client);
 
 const TABLE_NAME = process.env.PRODUCTS_TABLE;
 
+// CORS lo emite el FunctionUrlConfig.Cors del template (capa de plataforma).
+// Si el handler lo manda TAMBIEN, la respuesta lleva dos Access-Control-Allow-Origin
+// y el navegador la rechaza con "Failed to fetch". curl no lo nota: sin header Origin,
+// la Function URL no agrega el suyo y solo se ve uno.
 exports.handler = async (event) => {
     console.log('Event:', JSON.stringify(event, null, 2));
 
@@ -27,8 +31,7 @@ exports.handler = async (event) => {
             return {
                 statusCode: 400,
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     error: 'Campos requeridos faltantes',
@@ -64,8 +67,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 201,
             headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(product)
         };
@@ -75,8 +77,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 error: 'Error al crear producto',

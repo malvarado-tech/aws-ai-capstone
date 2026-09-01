@@ -31,16 +31,18 @@ const { handler: getItem } = require('../get-item/index.js');
 const { handler: updateItem } = require('../update-item/index.js');
 const { handler: deleteItem } = require('../delete-item/index.js');
 
-const CORS_HEADERS = {
+// CORS lo emite el FunctionUrlConfig.Cors del template (capa de plataforma), que ademas
+// responde el preflight OPTIONS sin invocar esta Lambda. Si el handler emitiera sus propios
+// Access-Control-*, la respuesta llevaria DOS Access-Control-Allow-Origin y el navegador la
+// rechazaria con "Failed to fetch". curl no lo nota: sin header Origin la Function URL no
+// agrega el suyo y solo se ve uno.
+const BASE_HEADERS = {
   'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
 };
 
 const json = (statusCode, payload) => ({
   statusCode,
-  headers: CORS_HEADERS,
+  headers: BASE_HEADERS,
   body: JSON.stringify(payload),
 });
 
@@ -58,7 +60,7 @@ exports.handler = async (event) => {
   // CORS preflight (la Function URL ya lo maneja si Cors está configurado, pero
   // respondemos por las dudas para invocaciones directas).
   if (method === 'OPTIONS') {
-    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+    return { statusCode: 204, headers: BASE_HEADERS, body: '' };
   }
 
   const segments = path.split('/').filter(Boolean); // ['products'] | ['products','<id>']

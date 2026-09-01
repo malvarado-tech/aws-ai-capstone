@@ -30,9 +30,13 @@ table = boto3.resource("dynamodb").Table(PRODUCTS_TABLE)
 
 
 def _response(status, body):
+    # CORS lo emite el FunctionUrlConfig.Cors del template (capa de plataforma).
+    # Si el handler lo manda TAMBIEN, la respuesta lleva dos Access-Control-Allow-Origin
+    # y el navegador la rechaza con "Failed to fetch". curl no lo nota: sin header Origin,
+    # la Function URL no agrega el suyo y solo se ve uno.
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body, ensure_ascii=False),
     }
 
