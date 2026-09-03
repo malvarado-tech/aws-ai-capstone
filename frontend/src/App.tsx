@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Store, Settings, Search, Plus, Loader2 } from 'lucide-react';
+import { Store, Settings, Search, Plus, Loader2, Globe } from 'lucide-react';
 import { ProductCard } from './components/ProductCard';
 import { ProductModal } from './components/ProductModal';
 import { useProducts } from './hooks/useProducts';
@@ -7,6 +7,7 @@ import type { Product } from './lib/types';
 
 function App() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [language, setLanguage] = useState<'es' | 'en'>('es');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>();
   const [searchTerm, setSearchTerm] = useState('');
@@ -70,17 +71,44 @@ function App() {
                 <p className="text-sm text-gray-500">Catálogo de Productos</p>
               </div>
             </div>
-            <button
-              onClick={() => setIsAdmin(!isAdmin)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                isAdmin
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              {isAdmin ? 'Modo Admin' : 'Modo Cliente'}
-            </button>
+            <div className="flex items-center gap-3">
+              {/* Language Toggle */}
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg">
+                <Globe className="w-4 h-4 text-gray-600" />
+                <button
+                  onClick={() => setLanguage('es')}
+                  className={`px-3 py-1 rounded font-medium transition-colors ${
+                    language === 'es'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  ES
+                </button>
+                <button
+                  onClick={() => setLanguage('en')}
+                  className={`px-3 py-1 rounded font-medium transition-colors ${
+                    language === 'en'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+              {/* Admin Toggle */}
+              <button
+                onClick={() => setIsAdmin(!isAdmin)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                  isAdmin
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                {isAdmin ? 'Modo Admin' : 'Modo Cliente'}
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -122,7 +150,6 @@ function App() {
         </div>
 
         {loading ? (
-          // role="status" + aria-live: un lector de pantalla anuncia la carga.
           <div role="status" aria-live="polite" className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-blue-600 animate-spin" aria-hidden="true" />
             <span className="sr-only">Cargando productos…</span>
@@ -149,6 +176,7 @@ function App() {
               <ProductCard
                 key={product.productId}
                 product={product}
+                language={language}
                 isAdmin={isAdmin}
                 onEdit={handleEdit}
                 onDelete={handleDelete}

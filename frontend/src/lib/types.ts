@@ -31,4 +31,16 @@ export interface Product {
   aiAudioUrl?: string;              // S5 · Polly (URL prefirmada)
   aiDescription?: string;           // S6 · Bedrock
   aiEmbedding?: number[];           // S7 · Bedrock embeddings
+
+  // ---- Traducciones estructuradas (del backend, S04) ----
+  translations?: {
+    es?: {
+      name?: string;
+      description?: string;
+    };
+    en?: {
+      name?: string;
+      description?: string;
+    };
+  };
 }

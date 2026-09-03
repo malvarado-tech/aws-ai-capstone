@@ -10,6 +10,16 @@ export const mockProduct: Product = {
   imageUrl: 'https://public-data-669070217575.s3.us-east-1.amazonaws.com/white-shirt.jpg',
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
+  translations: {
+    es: {
+      name: 'Camisa Blanca Clásica',
+      description: 'Camisa blanca elegante perfecta para cualquier ocasión',
+    },
+    en: {
+      name: 'Classic White Shirt',
+      description: 'Elegant white shirt perfect for any occasion',
+    },
+  },
 };
 
 export const mockProducts: Product[] = [
@@ -24,6 +34,16 @@ export const mockProducts: Product[] = [
     imageUrl: 'https://public-data-669070217575.s3.us-east-1.amazonaws.com/white-shirt.jpg',
     createdAt: '2024-01-02T00:00:00Z',
     updatedAt: '2024-01-02T00:00:00Z',
+    translations: {
+      es: {
+        name: 'Jeans Azules',
+        description: 'Jeans cómodos de mezclilla azul',
+      },
+      en: {
+        name: 'Blue Jeans',
+        description: 'Comfortable blue denim jeans',
+      },
+    },
   },
   {
     productId: 'test-product-789',
@@ -35,6 +55,16 @@ export const mockProducts: Product[] = [
     imageUrl: 'https://public-data-669070217575.s3.us-east-1.amazonaws.com/white-shirt.jpg',
     createdAt: '2024-01-03T00:00:00Z',
     updatedAt: '2024-01-03T00:00:00Z',
+    translations: {
+      es: {
+        name: 'Zapatos Deportivos',
+        description: 'Zapatillas deportivas para correr',
+      },
+      en: {
+        name: 'Sports Shoes',
+        description: 'Athletic sneakers for running',
+      },
+    },
   },
   {
     productId: 'test-product-101',
@@ -46,6 +76,16 @@ export const mockProducts: Product[] = [
     imageUrl: 'https://public-data-669070217575.s3.us-east-1.amazonaws.com/white-shirt.jpg',
     createdAt: '2024-01-04T00:00:00Z',
     updatedAt: '2024-01-04T00:00:00Z',
+    translations: {
+      es: {
+        name: 'Reloj Elegante',
+        description: 'Reloj de pulsera elegante',
+      },
+      en: {
+        name: 'Elegant Watch',
+        description: 'Elegant wristwatch',
+      },
+    },
   },
 ];
 
