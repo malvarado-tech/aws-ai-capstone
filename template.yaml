@@ -208,6 +208,56 @@ Resources:
           AllowHeaders: [ "*" ]
 
   # ---------------------------------------------------------------------------
+  # S5 · Amazon Polly + bucket de audio  —  pegar en template.yaml
+  # ---------------------------------------------------------------------------
+  # Agrega 1 bucket S3 (audio) y 1 Lambda con Function URL propia. La función declara
+  # sus `Policies:` y SAM le crea un rol de mínimo privilegio. Ver docs/IAM.md.
+
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-audio
+      # Sin acceso público: el audio se sirve por URL prefirmada (mejor práctica).
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAudio
+            Status: Enabled
+            ExpirationInDays: 7   # FinOps: el audio de demo no se acumula
+
+  SynthesizeVoiceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-SynthesizeVoice
+      Description: S5 - Descripcion por voz / accesibilidad (Amazon Polly)
+      CodeUri: sessions/S05-polly-voice/functions/synthesize-voice
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        - Statement:
+            - Effect: Allow
+              Action: polly:SynthesizeSpeech
+              Resource: "*"
+        # Escribe el mp3 y firma la URL prefirmada con este rol -> Crud.
+        - S3CrudPolicy:
+            BucketName: !Ref AudioBucket
+      Environment:
+        Variables:
+          AUDIO_BUCKET: !Ref AudioBucket
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
+  # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
   FrontendBucket:
@@ -283,6 +333,12 @@ Outputs:
   TranslateCatalogUrl:
     Description: S4 Function URL (Amazon Translate). POST /products/{id}/translate {"target":"en"}
     Value: !GetAtt TranslateCatalogFunctionUrl.FunctionUrl
+  SynthesizeVoiceUrl:
+    Description: S5 Function URL (Amazon Polly). POST /products/{id}/voice {"lang":"es"}
+    Value: !GetAtt SynthesizeVoiceFunctionUrl.FunctionUrl
+  AudioBucketName:
+    Description: S3 Bucket name for audio (presigned URLs, 1-hour expiry)
+    Value: !Ref AudioBucket
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable

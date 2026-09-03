@@ -642,6 +642,96 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S04" ]; then
   info "S04 no está desplegada en este stack (falta el output TranslateCatalogUrl)"
 fi
 
+# ============================================================ S05 ===========
+S05URL="$(out SynthesizeVoiceUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S05" ]; } && [ -n "$S05URL" ]; then
+head_ "S05 · Amazon Polly (voz + accesibilidad)"
+  D="$EV/S05-polly-voice"
+
+  cap "$D/01-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-SynthesizeVoice" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,MemorySize:MemorySize,Timeout:Timeout,Tracing:TracingConfig.Mode,Env:Environment.Variables,Role:Role}' --output json
+  cap "$D/02-function-url.txt" bash -c "echo 'SynthesizeVoiceUrl = $S05URL/'"
+  cap "$D/03-audio-bucket-config.json" bash -c "
+    aws s3api get-bucket-versioning --bucket '$STACK-audio' --region '$REGION' 2>/dev/null || echo 'bucket-versioning: ninguno'
+    aws s3api get-bucket-lifecycle-configuration --bucket '$STACK-audio' --region '$REGION' --query 'Rules[]' --output json
+  "
+  cap "$D/04-bucket-private.txt" bash -c "
+    aws s3api get-bucket-public-access-block --bucket '$STACK-audio' --region '$REGION' --query 'PublicAccessBlockConfiguration' --output json
+    echo '--- policy (esperado: error de AccessDenied)'
+    aws s3api get-bucket-policy --bucket '$STACK-audio' --region '$REGION' --output json 2>&1 | head -3
+  "
+
+  cap "$D/05-iam-permisos.txt" bash -c "
+    PROLE=\$(aws lambda get-function-configuration --function-name '$STACK-SynthesizeVoice' \
+              --region '$REGION' --query Role --output text); PROLE=\${PROLE##*/}
+    echo \"rol: \$PROLE\"
+    aws iam get-role --role-name \"\$PROLE\" --query 'Role.PermissionsBoundary.PermissionsBoundaryArn' --output text
+    for p in \$(aws iam list-role-policies --role-name \"\$PROLE\" --query 'PolicyNames[]' --output text); do
+      echo
+      echo \"--- \$p\"
+      aws iam get-role-policy --role-name \"\$PROLE\" --policy-name \"\$p\" --query 'PolicyDocument.Statement[].{Action:Action,Resource:Resource}' --output json
+    done
+  "
+
+  cap "$D/06-audios-generados-es-en.json" python3 -c "
+import json, urllib.request, sys
+api, s05 = '$API', '$S05URL'
+res = {}
+for p in json.load(urllib.request.urlopen(api + '/products'))['products']:
+    if p['name'].startswith('__'): continue
+    res[p['name']] = {}
+    for lang in ('es', 'en'):
+        req = urllib.request.Request(s05 + '/products/' + p['productId'] + '/voice',
+                data=json.dumps({'lang': lang}).encode(),
+                headers={'Content-Type':'application/json'}, method='POST')
+        res[p['name']][lang] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  cap "$D/07-resumen-voces.txt" python3 -c "
+import json, pathlib
+lines = pathlib.Path('$D/06-audios-generados-es-en.json').read_text().splitlines()
+data = json.loads('\n'.join(l for l in lines if not l.startswith('#')))
+print('Audios generados (presigned URLs, válidas 1 hora):')
+print()
+for name, porlang in data.items():
+    print(name)
+    for lang, d in porlang.items():
+        print('  %s: %s (expires in %ds)' % (lang, d['voice'], d['expiresIn']))
+        url = d['audioUrl'].split('?')[0]
+        print('       S3 key: %s' % url.split('/')[-1])
+    print()
+"
+
+  cap "$D/08-s3-objetos-audio.txt" bash -c "
+    echo 'Objetos en el bucket de audio:'
+    aws s3 ls s3://$STACK-audio/audio/ --recursive --region '$REGION'
+    echo
+    echo 'Tamaño total:'
+    aws s3 du s3://$STACK-audio/ --recursive --region '$REGION'
+  "
+
+  cap "$D/09-cobertura-audio.txt" bash -c "
+    echo -n 'productos con audioKey: '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' \
+      --filter-expression 'attribute_exists(audioKey)' --select COUNT --query Count --output text
+    echo -n 'productos totales:       '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' --select COUNT --query Count --output text
+  "
+
+  cap "$D/10-cloudwatch-logs.txt" bash -c "
+    aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/$STACK-SynthesizeVoice' \
+      --region '$REGION' --query 'logGroups[].[logGroupName,retentionInDays]' --output text
+    echo '--- últimos eventos'
+    aws logs filter-log-events --log-group-name '/aws/lambda/$STACK-SynthesizeVoice' --region '$REGION' \
+      --start-time \$(( (\$(date -u +%s) - 3600) * 1000 )) \
+      --query 'events[-25:].message' --output text 2>/dev/null | cut -c1-200
+  "
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S05" ]; then
+  info "S05 no está desplegada en este stack (falta el output SynthesizeVoiceUrl)"
+fi
+
 # ================================================ SESIONES PENDIENTES =======
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"

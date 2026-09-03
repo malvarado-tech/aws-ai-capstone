@@ -108,6 +108,26 @@ que lo generó. Se puede volver a correr y diffear.
 | `09-cobertura-translations.txt` | 4 de 4 productos traducidos |
 | `10-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
 
+### `S05-polly-voice/` — Amazon Polly
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-lambda-config.json` | `python3.12`, `AUDIO_BUCKET` apuntando a stack name |
+| `02-function-url.txt` | la Function URL propia de la sesión (`SynthesizeVoiceUrl`) |
+| `03-audio-bucket-config.json` | lifecycle rule (auto-delete after 7 days) + no versioning |
+| `04-bucket-private.txt` | `BlockPublic…: true` (los 4), sin bucket policy (privado) |
+| `05-iam-permisos.txt` | `polly:SynthesizeSpeech` (Resource `*`) + `S3CrudPolicy` acotado al bucket de audio |
+| `06-audios-generados-es-en.json` | 4 productos × 2 idiomas, presigned URLs (1 hora) |
+| `07-resumen-voces.txt` | lo mismo legible (Lupe para ES, Joanna para EN) |
+| `08-s3-objetos-audio.txt` | objetos `.mp3` en el bucket y su tamaño |
+| `09-cobertura-audio.txt` | 4 de 4 productos con `audioKey` en DynamoDB |
+| `10-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
+
+Polly es **texto→voz (TTS)**, no Transcribe (voz→texto, STT). Las voces neuronales suenan naturales. Las
+presigned URLs son el patrón seguro: el bucket está 100% privado, el acceso es por token temporal. La
+regla de ciclo de vida es FinOps: el audio de demo no se acumula, se auto-borra a los 7 días. Dimension
+de Responsible AI: accesibilidad real para personas con discapacidad visual (D4).
+
 `04-…` es la medición que motivó el umbral, y `08-…` el invariante que el bug rompía: la traducción
 `es→es` devolvía *"Vestido midi con estampado floral"* y **sobrescribía el nombre canónico**. Detalle en
 [`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#13); el `AccessDenied` de Comprehend disparado
