@@ -258,6 +258,48 @@ Resources:
           AllowHeaders: [ "*" ]
 
   # ---------------------------------------------------------------------------
+  # S6 · Amazon Bedrock (generacion)  —  pegar en template.yaml
+  # ---------------------------------------------------------------------------
+  # Patrón: Function URL propia (sin API Gateway) + `Policies:` de mínimo privilegio
+  # (SAM crea el rol). Ver docs/IAM.md.
+  # Ver docs/SANDBOX-COMPAT.md.
+
+  GenerateDescriptionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-GenerateDescription
+      Description: S6 - Generar descripciones de producto (Bedrock / GenAI)
+      CodeUri: sessions/S06-bedrock-descripciones/functions/generate-description
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductsTable
+        # Bedrock SI admite ARN de recurso -> acotamos al modelo, no a bedrock:*.
+        # inference-profile cubre los IDs con prefijo "us." (perfiles cross-region).
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
+                - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
+      Timeout: 60   # los modelos generativos pueden tardar varios segundos
+      Environment:
+        Variables:
+          # Usa inference profile (prefijo "us.") en lugar de foundation-model directo.
+          # on-demand throughput no se soporta para foundation models; hay que usar un
+          # profile que provisione capacidad compartida. Detalle: docs/IAM.md.
+          BEDROCK_MODEL_ID: us.anthropic.claude-haiku-4-5-20251001-v1:0
+          BEDROCK_MAX_TOKENS: "300"
+          BEDROCK_TEMPERATURE: "0.7"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
+  # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
   FrontendBucket:
@@ -339,6 +381,9 @@ Outputs:
   AudioBucketName:
     Description: S3 Bucket name for audio (presigned URLs, 1-hour expiry)
     Value: !Ref AudioBucket
+  GenerateDescriptionUrl:
+    Description: S6 Function URL (Bedrock / Claude). POST /products/{id}/describe {"tone":"elegante","save":true}
+    Value: !GetAtt GenerateDescriptionFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable
