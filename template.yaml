@@ -283,6 +283,11 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
                 - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
+        # S9: ApplyGuardrail para proteger las salidas generativas.
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:ApplyGuardrail
+              Resource: !Sub arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:guardrail/*
       Timeout: 60   # los modelos generativos pueden tardar varios segundos
       Environment:
         Variables:
@@ -292,6 +297,8 @@ Resources:
           BEDROCK_MODEL_ID: us.anthropic.claude-haiku-4-5-20251001-v1:0
           BEDROCK_MAX_TOKENS: "300"
           BEDROCK_TEMPERATURE: "0.7"
+          BEDROCK_GUARDRAIL_ID: "0lk4bxdujw2r"
+          BEDROCK_GUARDRAIL_VERSION: "6"
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
@@ -394,6 +401,11 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
                 - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
+        # S9: ApplyGuardrail para proteger las salidas generativas.
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:ApplyGuardrail
+              Resource: !Sub arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:guardrail/*
       Timeout: 60
       Environment:
         Variables:
@@ -401,6 +413,8 @@ Resources:
           BEDROCK_MODEL_ID: us.anthropic.claude-haiku-4-5-20251001-v1:0
           ASSISTANT_TOP_K: "3"
           BEDROCK_MAX_TOKENS: "400"
+          BEDROCK_GUARDRAIL_ID: "0lk4bxdujw2r"
+          BEDROCK_GUARDRAIL_VERSION: "6"
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
