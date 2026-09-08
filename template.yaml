@@ -368,6 +368,47 @@ Resources:
           AllowHeaders: [ "*" ]
 
   # ---------------------------------------------------------------------------
+  # S8 · Bedrock chatbot RAG (asistente de compras)  —  pegar en template.yaml
+  # ---------------------------------------------------------------------------
+  # Reusa los embeddings de S7. Necesita InvokeModel sobre DOS modelos:
+  # el de embeddings (retrieval) y el de generacion (chat).
+  # Patrón: Function URL propia (sin API Gateway) + `Policies:` de mínimo privilegio
+  # (SAM crea el rol). Ver docs/IAM.md.
+
+  ShoppingAssistantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ShoppingAssistant
+      Description: S8 - Asistente de compras conversacional (Bedrock RAG)
+      CodeUri: sessions/S08-bedrock-chatbot/functions/shopping-assistant
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ProductsTable
+        # Bedrock SI admite ARN de recurso -> acotamos al modelo, no a bedrock:*.
+        # inference-profile cubre los IDs con prefijo "us." (perfiles cross-region).
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
+                - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
+      Timeout: 60
+      Environment:
+        Variables:
+          EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
+          BEDROCK_MODEL_ID: us.anthropic.claude-haiku-4-5-20251001-v1:0
+          ASSISTANT_TOP_K: "3"
+          BEDROCK_MAX_TOKENS: "400"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [ "*" ]
+          AllowMethods: [ "*" ]
+          AllowHeaders: [ "*" ]
+
+  # ---------------------------------------------------------------------------
   # Frontend estático (S3 + CloudFront).
   # ---------------------------------------------------------------------------
   FrontendBucket:
@@ -458,6 +499,9 @@ Outputs:
   SemanticSearchUrl:
     Description: S7 Function URL (búsqueda). GET /search?q=...
     Value: !GetAtt SemanticSearchFunctionUrl.FunctionUrl
+  ShoppingAssistantUrl:
+    Description: S8 Function URL (chatbot RAG). POST /assistant {"message":"..."}
+    Value: !GetAtt ShoppingAssistantFunctionUrl.FunctionUrl
   ProductsTableName:
     Description: Name of the DynamoDB Products table
     Value: !Ref ProductsTable
