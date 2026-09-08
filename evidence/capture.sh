@@ -848,6 +848,60 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S07" ]; then
   info "S07 no está desplegada en este stack (faltan outputs IndexEmbeddingsUrl y SemanticSearchUrl)"
 fi
 
+# ============================================================ S08 ===========
+S08URL="$(out ShoppingAssistantUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S08" ]; } && [ -n "$S08URL" ]; then
+head_ "S08 · Bedrock Chatbot (RAG conversacional)"
+  D="$EV/S08-bedrock-chatbot"
+
+  cap "$D/01-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-ShoppingAssistant" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,Timeout:Timeout,Env:Environment.Variables}' --output json
+
+  cap "$D/02-iam-dual-models.txt" bash -c "
+    CROLE=\$(aws lambda get-function-configuration --function-name '$STACK-ShoppingAssistant' \
+              --region '$REGION' --query Role --output text); CROLE=\${CROLE##*/}
+    echo \"rol: \$CROLE (DynamoDBReadPolicy + bedrock:InvokeModel dual)\"
+    for p in \$(aws iam list-role-policies --role-name \"\$CROLE\" --query 'PolicyNames[]' --output text); do
+      aws iam get-role-policy --role-name \"\$CROLE\" --policy-name \"\$p\" --query 'PolicyDocument.Statement[?Action==\"bedrock:InvokeModel\"]' --output json 2>/dev/null | head -5
+    done
+  "
+
+  cap "$D/03-consultas-rag.json" python3 -c "
+import json, urllib.request, sys
+s08 = '$S08URL'
+queries = [
+    'busco algo cómodo y blanco para caminar',
+    '¿venden relojes?',
+    'dame algo abrigado para el invierno'
+]
+res = {}
+for q in queries:
+    req = urllib.request.Request(s08 + '/assistant', data=json.dumps({'message': q}).encode(),
+            headers={'Content-Type': 'application/json'}, method='POST')
+    res[q] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  cap "$D/04-resumen-rag.txt" python3 -c "
+import json, pathlib, sys
+try:
+    lines = pathlib.Path('$D/03-consultas-rag.json').read_text().splitlines()
+    data = json.loads('\n'.join(l for l in lines if not l.startswith('#')))
+    for q, d in data.items():
+        print(f'Consulta: {q}')
+        print(f'  Respuesta: {d[\"reply\"][:80]}...')
+        print(f'  Productos: {[r[\"name\"] for r in d[\"retrieved\"]]}')
+        print(f'  Tokens: {d[\"usage\"][\"inputTokens\"]} in, {d[\"usage\"][\"outputTokens\"]} out')
+        print()
+except:
+    pass
+"
+
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S08" ]; then
+  info "S08 no está desplegada en este stack (falta el output ShoppingAssistantUrl)"
+fi
+
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"
   for pair in "S02:ModerateImageUrl" "S03:AnalyzeSentimentUrl" "S04:TranslateCatalogUrl" \

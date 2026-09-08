@@ -161,6 +161,23 @@ y los consulta por similitud coseno. S08 suma Generation (que Claude responda us
 Búsqueda semántica vs. keyword: "algo abrigado para el invierno" encuentra la chaqueta sin necesidad de
 palabras exactas — entiende sinónimos y contexto por la cercanía vectorial. D3 (Applications, 28% examen).
 
+### `S08-bedrock-chatbot/` — Bedrock Chatbot (RAG conversacional)
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-lambda-config.json` | `python3.12`, `EMBED_MODEL_ID=amazon.titan-embed-text-v2:0`, `BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0`, `ASSISTANT_TOP_K=3` |
+| `02-iam-dual-models.txt` | `bedrock:InvokeModel` acotado a ambos modelos (embeddings + generation) |
+| `03-consultas-rag.json` | 3 consultas (cómodo blanco, relojes, abrigado invierno) con replies + productos recuperados |
+| `04-resumen-rag.txt` | lo mismo legible (primeros 80 chars de respuesta, productos, tokens) |
+
+**RAG completo:** el asistente embebe la consulta (1 embedding), recupera TOP_K productos por coseno,
+inyecta como contexto en system prompt, Claude genera respuesta SOLO usando eso. No inventa: "¿venden
+relojes?" devuelve "no" honestamente, sin fabricar productos. El contexto recuperado varía por relevancia;
+token usage crece con recuperación (271–275 in típico para 3 productos).
+
+Converse API soporta `history` (multiturn con memoria), pero el test valida que el grounding funciona:
+consultas fuera de dominio → rechazo sin alucinación. D2 + D3 (52% examen).
+
 `04-…` es la medición que motivó el umbral, y `08-…` el invariante que el bug rompía: la traducción
 `es→es` devolvía *"Vestido midi con estampado floral"* y **sobrescribía el nombre canónico**. Detalle en
 [`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#13); el `AccessDenied` de Comprehend disparado
