@@ -128,6 +128,39 @@ presigned URLs son el patrón seguro: el bucket está 100% privado, el acceso es
 regla de ciclo de vida es FinOps: el audio de demo no se acumula, se auto-borra a los 7 días. Dimension
 de Responsible AI: accesibilidad real para personas con discapacidad visual (D4).
 
+### `S06-bedrock-descripciones/` — Amazon Bedrock (Claude generativo)
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-lambda-config.json` | `python3.12`, `BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0` (inference profile) |
+| `02-function-url.txt` | la Function URL propia de la sesión (`GenerateDescriptionUrl`) |
+| `03-iam-modelo-bedrock.txt` | `bedrock:InvokeModel` acotado a inference-profile/* (no on-demand foundation-model) |
+| `04-descripciones-tres-tonos.json` | respuestas para tres tonos (elegante, divertido, minimalista) con token usage |
+| `05-resumen-generacion.txt` | lo mismo legible (modelo, tokens, primeras 80 chars) |
+| `06-cobertura-descripciones.txt` | X de 4 productos con `aiDescription` en DynamoDB |
+| `07-cloudwatch-logs.txt` | el log group de la función y sus últimos eventos |
+
+**Generación vs. análisis:** A diferencia de S01–S05 (clasificar, detectar, traducir), S06 **genera texto nuevo**.
+Temperatura 0.7 (creativo pero coherente) hace que el mismo prompt con tonos distintos produzca salidas
+distintas. El modelo ID usa inference profile (`us.` prefix) porque on-demand throughput no se soporta
+en Bedrock. D2 (Generative AI Fundamentals, 24% del examen).
+
+### `S07-bedrock-rag-busqueda/` — Bedrock Embeddings (búsqueda semántica / RAG)
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-index-lambda-config.json` | IndexEmbeddings: `python3.12`, `EMBED_MODEL_ID=amazon.titan-embed-text-v2:0` |
+| `02-search-lambda-config.json` | SemanticSearch: `SEARCH_TOP_K=5` |
+| `03-iam-permisos-embedding.txt` | Index: CRUD; Search: ReadOnly. Ambas con `bedrock:InvokeModel` |
+| `04-indice-resultado.json` | resultado del POST /search/index: `indexed: 4` |
+| `05-busquedas-semanticas.json` | 4 consultas (abrigado, zapatos, regalo, oficina) con results + scores |
+| `06-productos-con-embeddings.txt` | X de 4 productos con `embedding` en DynamoDB |
+
+**RAG = Retrieval + Generation.** S07 es Retrieval: embebe los productos (1024D vectors, Titan Embeddings)
+y los consulta por similitud coseno. S08 suma Generation (que Claude responda usando el contexto recuperado).
+Búsqueda semántica vs. keyword: "algo abrigado para el invierno" encuentra la chaqueta sin necesidad de
+palabras exactas — entiende sinónimos y contexto por la cercanía vectorial. D3 (Applications, 28% examen).
+
 `04-…` es la medición que motivó el umbral, y `08-…` el invariante que el bug rompía: la traducción
 `es→es` devolvía *"Vestido midi con estampado floral"* y **sobrescribía el nombre canónico**. Detalle en
 [`../docs/TROUBLESHOOTING.md`](../docs/TROUBLESHOOTING.md#13); el `AccessDenied` de Comprehend disparado

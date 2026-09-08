@@ -732,7 +732,122 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S05" ]; then
   info "S05 no está desplegada en este stack (falta el output SynthesizeVoiceUrl)"
 fi
 
-# ================================================ SESIONES PENDIENTES =======
+# ============================================================ S06 ===========
+S06URL="$(out GenerateDescriptionUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S06" ]; } && [ -n "$S06URL" ]; then
+head_ "S06 · Amazon Bedrock + Claude (IA generativa)"
+  D="$EV/S06-bedrock-descripciones"
+
+  cap "$D/01-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-GenerateDescription" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,MemorySize:MemorySize,Timeout:Timeout,Env:Environment.Variables,Role:Role}' --output json
+  cap "$D/02-function-url.txt" bash -c "echo 'GenerateDescriptionUrl = $S06URL/'"
+  cap "$D/03-iam-modelo-bedrock.txt" bash -c "
+    BROLE=\$(aws lambda get-function-configuration --function-name '$STACK-GenerateDescription' \
+              --region '$REGION' --query Role --output text); BROLE=\${BROLE##*/}
+    echo \"rol: \$BROLE\"
+    for p in \$(aws iam list-role-policies --role-name \"\$BROLE\" --query 'PolicyNames[]' --output text); do
+      echo
+      echo \"--- \$p\"
+      aws iam get-role-policy --role-name \"\$BROLE\" --policy-name \"\$p\" --query 'PolicyDocument.Statement[?Action==\"bedrock:InvokeModel\"]' --output json
+    done
+  "
+
+  cap "$D/04-descripciones-tres-tonos.json" python3 -c "
+import json, urllib.request
+s06 = '$S06URL'
+res = {}
+for tone in ('elegante y aspiracional', 'divertido y juvenil', 'minimalista'):
+    req = urllib.request.Request(s06 + '/products/' + '$(curl -s '$(aws cloudformation describe-stacks --stack-name \"$STACK_NAME\" --region us-east-1 --query \"Stacks[0].Outputs[?OutputKey==\\'ApiUrl\\'].OutputValue\" --output text | sed 's:/$::')' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"products\"][0][\"productId\"])')' + '/describe',
+            data=json.dumps({'tone': tone, 'save': False}).encode(),
+            headers={'Content-Type': 'application/json'}, method='POST')
+    res[tone] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  cap "$D/05-resumen-generacion.txt" python3 -c "
+import json, pathlib
+lines = pathlib.Path('$D/04-descripciones-tres-tonos.json').read_text().splitlines()
+data = json.loads('\n'.join(l for l in lines if not l.startswith('#')))
+for tone, d in data.items():
+    print(f'{tone}:')
+    print(f'  model: {d[\"model\"]}')
+    print(f'  tokens: {d[\"usage\"][\"inputTokens\"]} in, {d[\"usage\"][\"outputTokens\"]} out')
+    print(f'  desc: {d[\"description\"][:80]}...')
+    print()
+"
+
+  cap "$D/06-cobertura-descripciones.txt" bash -c "
+    echo -n 'productos con aiDescription: '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' \
+      --filter-expression 'attribute_exists(aiDescription)' --select COUNT --query Count --output text
+    echo -n 'productos totales:            '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' --select COUNT --query Count --output text
+  "
+
+  cap "$D/07-cloudwatch-logs.txt" bash -c "
+    aws logs filter-log-events --log-group-name '/aws/lambda/$STACK-GenerateDescription' --region '$REGION' \
+      --start-time \$(( (\$(date -u +%s) - 3600) * 1000 )) \
+      --query 'events[-15:].message' --output text 2>/dev/null | cut -c1-200
+  "
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S06" ]; then
+  info "S06 no está desplegada en este stack (falta el output GenerateDescriptionUrl)"
+fi
+
+# ============================================================ S07 ===========
+S07IDX="$(out IndexEmbeddingsUrl)"
+S07SRC="$(out SemanticSearchUrl)"
+if { [ -z "$ONLY" ] || [ "$ONLY" = "S07" ]; } && [ -n "$S07IDX" ] && [ -n "$S07SRC" ]; then
+head_ "S07 · Bedrock Embeddings (búsqueda semántica / RAG)"
+  D="$EV/S07-bedrock-rag-busqueda"
+
+  cap "$D/01-index-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-IndexEmbeddings" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,Timeout:Timeout,Env:Environment.Variables}' --output json
+  cap "$D/02-search-lambda-config.json" aws lambda get-function-configuration \
+        --function-name "$STACK-SemanticSearch" --region "$REGION" \
+        --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,Timeout:Timeout,Env:Environment.Variables}' --output json
+
+  cap "$D/03-iam-permisos-embedding.txt" bash -c "
+    IROLE=\$(aws lambda get-function-configuration --function-name '$STACK-IndexEmbeddings' \
+              --region '$REGION' --query Role --output text); IROLE=\${IROLE##*/}
+    SROLE=\$(aws lambda get-function-configuration --function-name '$STACK-SemanticSearch' \
+              --region '$REGION' --query Role --output text); SROLE=\${SROLE##*/}
+    echo 'Index role: '$IROLE' (DynamoDBCrudPolicy + bedrock:InvokeModel)'
+    echo 'Search role: '$SROLE' (DynamoDBReadPolicy + bedrock:InvokeModel)'
+  "
+
+  cap "$D/04-indice-resultado.json" bash -c "
+    curl -s -X POST '${S07IDX%/}/search/index'
+  "
+
+  cap "$D/05-busquedas-semanticas.json" python3 -c "
+import json, urllib.request, urllib.parse
+s07 = '${S07SRC%/}'
+queries = [
+    'algo abrigado para el invierno',
+    'zapatos para caminar',
+    'regalo elegante',
+    'ropa para la oficina'
+]
+res = {}
+for q in queries:
+    req = urllib.request.Request(s07 + '/search?q=' + urllib.parse.quote(q))
+    res[q] = json.load(urllib.request.urlopen(req))
+json.dump(res, sys.stdout, indent=2, ensure_ascii=False)
+"
+
+  cap "$D/06-productos-con-embeddings.txt" bash -c "
+    echo -n 'productos con embedding: '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' \
+      --filter-expression 'attribute_exists(embedding)' --select COUNT --query Count --output text
+    echo -n 'productos totales:       '
+    aws dynamodb scan --table-name '$STACK-Products' --region '$REGION' --select COUNT --query Count --output text
+  "
+elif [ -z "$ONLY" ] || [ "$ONLY" = "S07" ]; then
+  info "S07 no está desplegada en este stack (faltan outputs IndexEmbeddingsUrl y SemanticSearchUrl)"
+fi
+
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"
   for pair in "S02:ModerateImageUrl" "S03:AnalyzeSentimentUrl" "S04:TranslateCatalogUrl" \
