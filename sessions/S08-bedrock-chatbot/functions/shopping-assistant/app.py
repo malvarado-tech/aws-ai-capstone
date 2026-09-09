@@ -109,12 +109,29 @@ def _build_messages(history, message, context_block):
         text = turn.get("text") or turn.get("content")
         if role in ("user", "assistant") and text:
             messages.append({"role": role, "content": [{"text": text}]})
-    # Mensaje actual con el contexto recuperado inyectado (grounding).
-    user_text = (
-        f"CATÁLOGO RELEVANTE:\n{context_block}\n\n"
-        f"PREGUNTA DEL CLIENTE: {message}"
+    # Mensaje actual: el contexto recuperado (grounding) y la pregunta del cliente van
+    # en DOS bloques separados, y sólo el segundo se marca con guardContent.
+    #
+    # Por qué importa (S9, medido): el guardrail evalúa TODO lo que se le manda. Con el
+    # system prompt de "tienda de moda" y tres productos del catálogo alrededor, el
+    # clasificador de temas denegados deja de reconocer la pregunta financiera — la misma
+    # frase que apply-guardrail bloquea sola pasa como end_turn dentro del converse.
+    # `guardContent` con el qualifier guard_content le dice al guardrail cuál es la parte
+    # NO CONFIABLE, así que evalúa la pregunta del cliente y no nuestro propio prompt.
+    # Es el patrón obligatorio en RAG: el contexto lo pusimos nosotros, la pregunta no.
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"text": f"CATÁLOGO RELEVANTE:\n{context_block}\n\nPREGUNTA DEL CLIENTE:"},
+                {
+                    "guardContent": {
+                        "text": {"text": message, "qualifiers": ["guard_content"]}
+                    }
+                },
+            ],
+        }
     )
-    messages.append({"role": "user", "content": [{"text": user_text}]})
     return messages
 
 

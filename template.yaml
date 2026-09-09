@@ -283,7 +283,18 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
                 - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
-        # S9: ApplyGuardrail para proteger las salidas generativas.
+        # S9: ApplyGuardrail para proteger las salidas generativas. Es una acción
+        # SEPARADA de InvokeModel: un rol que puede invocar el modelo pero no aplicar el
+        # guardrail falla recién cuando el handler pasa guardrailConfig — o sea, la
+        # llamada sin protección sigue andando y el error aparece al activar la defensa.
+        #
+        # El guardrail se quedó en el tier CLASSIC a propósito. STANDARD (definiciones
+        # largas + mejor multilingüe) exige inferencia cross-region, y entonces la
+        # autorización pasa también por el ARN guardrail-PROFILE — el mismo patrón que
+        # foundation-model / inference-profile de arriba. Ese ARN no se puede conceder
+        # acá: `techmoda-capstone-boundary` no lo permite, y el boundary es el techo. Con
+        # STANDARD la Lambda muere con AccessDeniedException sobre
+        # guardrail-profile/us.guardrail.v1:0. Ver TROUBLESHOOTING #15.
         - Statement:
             - Effect: Allow
               Action: bedrock:ApplyGuardrail
@@ -298,7 +309,13 @@ Resources:
           BEDROCK_MAX_TOKENS: "300"
           BEDROCK_TEMPERATURE: "0.7"
           BEDROCK_GUARDRAIL_ID: "0lk4bxdujw2r"
-          BEDROCK_GUARDRAIL_VERSION: "6"
+          # Versión 9: DOS temas denegados enfocados (financiero/legal + médico). La 6 tenía
+          # uno solo que los mezclaba y bloqueaba 1 de 5 paráfrasis; separarlos y enumerar
+          # sustantivos concretos en la definition lo llevó a 7 de 8, sin falsos positivos.
+          # Medido en evidence/S09-guardrails-sesgo/08-…; detalle en TROUBLESHOOTING #15.
+          # Apuntá SIEMPRE a una versión publicada, nunca a DRAFT: DRAFT cambia bajo los
+          # pies de la Lambda y la evidencia deja de ser reproducible.
+          BEDROCK_GUARDRAIL_VERSION: "9"
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
@@ -401,7 +418,18 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/*
                 - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
-        # S9: ApplyGuardrail para proteger las salidas generativas.
+        # S9: ApplyGuardrail para proteger las salidas generativas. Es una acción
+        # SEPARADA de InvokeModel: un rol que puede invocar el modelo pero no aplicar el
+        # guardrail falla recién cuando el handler pasa guardrailConfig — o sea, la
+        # llamada sin protección sigue andando y el error aparece al activar la defensa.
+        #
+        # El guardrail se quedó en el tier CLASSIC a propósito. STANDARD (definiciones
+        # largas + mejor multilingüe) exige inferencia cross-region, y entonces la
+        # autorización pasa también por el ARN guardrail-PROFILE — el mismo patrón que
+        # foundation-model / inference-profile de arriba. Ese ARN no se puede conceder
+        # acá: `techmoda-capstone-boundary` no lo permite, y el boundary es el techo. Con
+        # STANDARD la Lambda muere con AccessDeniedException sobre
+        # guardrail-profile/us.guardrail.v1:0. Ver TROUBLESHOOTING #15.
         - Statement:
             - Effect: Allow
               Action: bedrock:ApplyGuardrail
@@ -414,7 +442,13 @@ Resources:
           ASSISTANT_TOP_K: "3"
           BEDROCK_MAX_TOKENS: "400"
           BEDROCK_GUARDRAIL_ID: "0lk4bxdujw2r"
-          BEDROCK_GUARDRAIL_VERSION: "6"
+          # Versión 9: DOS temas denegados enfocados (financiero/legal + médico). La 6 tenía
+          # uno solo que los mezclaba y bloqueaba 1 de 5 paráfrasis; separarlos y enumerar
+          # sustantivos concretos en la definition lo llevó a 7 de 8, sin falsos positivos.
+          # Medido en evidence/S09-guardrails-sesgo/08-…; detalle en TROUBLESHOOTING #15.
+          # Apuntá SIEMPRE a una versión publicada, nunca a DRAFT: DRAFT cambia bajo los
+          # pies de la Lambda y la evidencia deja de ser reproducible.
+          BEDROCK_GUARDRAIL_VERSION: "9"
       FunctionUrlConfig:
         AuthType: NONE
         Cors:

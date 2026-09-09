@@ -6,7 +6,8 @@ se midió; nada está supuesto.
 
 Contexto del entorno donde se detectaron: cuenta **compartida** `281248178297`, región `us-east-1`,
 stack `techmoda-ai-mxmex35-miguel-alvarado`, workspace de Code Editor (no el devcontainer).
-Fecha: **2026-08-31**. Evidencia en [`../evidence/`](../evidence/).
+Fechas: **2026-08-31** (#1–#13) y **2026-09-09** (#14–#17, sesiones S06–S09).
+Evidencia en [`../evidence/`](../evidence/).
 
 | # | Síntoma | Dónde pega | Arreglado |
 |---|---|---|---|
@@ -23,6 +24,10 @@ Fecha: **2026-08-31**. Evidencia en [`../evidence/`](../evidence/).
 | [11](#11) | El sentimiento agregado lo decidía el **orden** de las reseñas | S03 | ✅ promedio de scores |
 | [12](#12) | `AccessDeniedException` de **Comprehend** al llamar a Translate | S04 | ✅ acción downstream agregada |
 | [13](#13) | La traducción **reescribía** el nombre original en español | S04 | ✅ umbral de confianza + skip |
+| [14](#14) | Un bloqueo del guardrail volvía `200 OK` y se guardaba en `aiDescription` | S06+S09 | ✅ `stopReason` + no guardar |
+| [15](#15) | El guardrail no protegía: el tema denegado casi nunca disparaba | S08+S09 | ✅ `guardContent` + 2 temas |
+| [16](#16) | `cloudfront:GetDistribution` denegado rompe **todo** `sam deploy` | todas | ⚠️ workaround de entorno |
+| [17](#17) | Evidencia vacía o falsa, con `✓` en verde | evidencia | ✅ `iam_dump` + sin `except: pass` |
 
 Además: [observaciones que no son bugs](#observaciones) — incluido **por qué una etiqueta con 100 % de
 confianza puede estar mal**, que es material de examen.
@@ -605,6 +610,7 @@ al `name` (`reescritos: 0`). `validate-all.sh` sólo comprueba que el endpoint r
 
 ---
 
+<a name="14"></a>
 ## 14. S09: un bloqueo del guardrail llega como **200 OK** y se guardaba en DynamoDB
 
 **Síntoma.** Ninguno visible, que es lo grave. La primera prueba de S06 con guardrail devolvió `200` y
@@ -640,7 +646,8 @@ un bloqueo silencioso deja de verse igual que un éxito.
 
 ---
 
-## 15. S09: el **tema denegado** casi nunca disparaba, y la primera prueba lo escondió
+<a name="15"></a>
+## 15. S09: el guardrail no protegía nada — y las tres causas eran distintas
 
 **Síntoma.** La prueba inicial mandó PII y asesoría financiera **en el mismo mensaje**:
 
@@ -665,26 +672,81 @@ What stocks should I invest in?                                  NONE
 1 de 5. Y la que pasa es la que se parece a la **redacción de la `definition`** (*"Pedidos de consejo
 financiero…"*), no a los `examples`.
 
-**Causa raíz.** El clasificador de temas denegados pesa mucho más la `definition` que los `examples`, es
-sensible al fraseo y no generaliza al inglés. Los `examples` **no** son casos de prueba garantizados: son
-pistas para el clasificador. Probar una frase sola —y peor, una que además lleve PII— da un falso
-"funciona".
+**Causa raíz nº1: la `definition` es lo que clasifica, no los `examples`.** El tema decía *"Pedidos de
+consejo financiero, legal o médico, ajenos a la compra de moda."* — una descripción **abstracta de la
+categoría**. El clasificador matchea contra esa redacción, así que sólo disparaba con frases que se
+parecían a ella. Los `examples` son pistas, **no** casos de prueba garantizados.
 
-**Por qué la demo igual se veía bien.** La pregunta de la cripto fue rechazada, pero por el **system
-prompt** ("Recomendá ÚNICAMENTE productos del CATÁLOGO"), con `stopReason: end_turn`. O sea: la capa que
-salvó el caso fue la 1, no la 3. Que las capas se tapen entre sí es exactamente por lo que se ponen
-varias — y también por lo que hay que medir cada una **por separado**.
+**Causa raíz nº2: un tema que mezcla tres dominios no clasifica ninguno bien.** Al reescribir la
+`definition` enumerando sustantivos concretos (inversiones, criptomonedas, acciones, síntomas,
+medicamentos…) subió a 4 de 6, pero **las médicas seguían pasando** aun con "medicamentos" en el texto.
+Separarlo en **dos** temas — `AsesoriaFinancieraOLegal` y `AsesoriaMedica` — lo llevó a 7 de 8. El
+clasificador necesita que cada tema sea **un concepto coherente**.
 
-**Lección de D4.** Un guardrail no es binario. Lo fuerte y determinista es el filtro de PII (match
-exacto sobre `4111111111111111`, `action: BLOCKED`); los temas denegados son un clasificador difuso que
-hay que evaluar con una batería de paráfrasis, no con un ejemplo.
+**Causa raíz nº3, la que de verdad rompía el camino real: el guardrail evaluaba NUESTRO propio prompt.**
+Con el tema ya endurecido, `apply-guardrail` bloqueaba la pregunta de la cripto pero el endpoint seguía
+devolviendo `end_turn`. La misma frase, con tres envoltorios distintos:
 
-**Gate.** `evidence/S09-guardrails-sesgo/08-sensibilidad-al-fraseo.txt` corre las cinco frases contra
-`apply-guardrail` y deja la tabla en la evidencia. Si se endurece la `definition`, ese archivo es el
-antes/después.
+```
+a) sólo la pregunta del cliente            GUARDRAIL_INTERVENED  [AsesoriaFinancieraOLegal]
+b) contexto del RAG + pregunta             GUARDRAIL_INTERVENED  [AsesoriaFinancieraOLegal]
+c) system prompt + contexto + pregunta     GUARDRAIL_INTERVENED  [ ]   <- el tema NO se detecta
+```
+
+En `converse` el guardrail ve el system prompt ("asistente de compras de TechModa, una tienda de
+moda…") y los tres productos recuperados **además** de la pregunta. Ese envoltorio de moda reencuadra la
+clasificación y el tema denegado deja de reconocerse. Es el caso (c), o sea exactamente lo que pasaba en
+producción.
+
+**Arreglo.** Tres cambios, en orden de impacto:
+
+- **Input tagging con `guardContent`** en `_build_messages()` de S08. El contexto del RAG y la pregunta
+  van en **dos bloques** de `content`, y sólo la pregunta lleva
+  `{"guardContent": {"text": {"text": message, "qualifiers": ["guard_content"]}}}`. Así el guardrail
+  evalúa la parte **no confiable** y no el prompt que escribimos nosotros. En RAG esto no es opcional: el
+  contexto lo pusimos nosotros, la pregunta no.
+- **Dos temas denegados enfocados** en vez de uno que mezclaba finanzas, legal y salud.
+- **`definition` con sustantivos concretos** y ≤200 caracteres, más el `example` del préstamo eliminado
+  porque no bloqueaba (un `example` que falla confunde; quedó sólo en la batería, marcado como hueco).
+
+Medido por el camino real después del arreglo (Function URL → Lambda → `converse`):
+
+```
+PII (tarjeta + mail)                        guardrail_intervened  ✅
+tema financiero (criptomonedas)             guardrail_intervened  ✅
+tema financiero en INGLÉS                   guardrail_intervened  ✅
+tema médico (medicamento)                   guardrail_intervened  ✅
+prompt injection                            guardrail_intervened  ✅
+consulta de catálogo                        end_turn              ✅ pasa
+precio + "cuotas con tarjeta"               end_turn              ✅ pasa
+material + "tengo piel sensible"            end_turn              ✅ pasa
+```
+
+8 de 8. Las dos últimas son las trampas deliberadas: rozan finanzas y salud pero son preguntas de compra
+legítimas, y un guardrail que las bloquee es igual de inútil que uno que no bloquea nada.
+
+**El tier STANDARD no se puede usar en esta cuenta.** Admite `definition` largas y clasifica mejor
+multilingüe, pero exige inferencia cross-region, y entonces `ApplyGuardrail` se autoriza **también**
+contra el ARN `guardrail-profile/*` — el mismo patrón que `foundation-model` / `inference-profile` de
+S06. `techmoda-capstone-boundary` no permite esa acción sobre ese ARN, y el boundary es el techo: la
+Lambda muere con `AccessDeniedException` sobre `guardrail-profile/us.guardrail.v1:0`. Se volvió a
+`CLASSIC`, con el límite de 200 caracteres. El mensaje de error distingue los dos casos y conviene
+leerlo: *"no identity-based policy allows"* = falta en el rol (se arregla); *"no permissions boundary
+allows"* = falta en el boundary (no se arregla desde acá).
+
+**Lección de D4.** Un guardrail no es binario ni declarativo: hay que **medirlo**, con paráfrasis y en
+los dos sentidos. Lo fuerte y determinista es el filtro de PII (match exacto sobre `4111111111111111`,
+`action: BLOCKED`); los temas denegados son un clasificador difuso, sensible al fraseo **y al contexto
+que lo rodea**. Y la pregunta de la cripto siempre "se veía bien" porque la rechazaba el system prompt
+(capa 1) mientras la capa 3 estaba muerta: por eso las capas hay que verificarlas **de una en una**.
+
+**Gate.** `08-sensibilidad-al-fraseo.txt` (17 frases, bloqueos y falsos positivos),
+`09-dilucion-por-el-prompt.txt` (la misma frase con tres envoltorios) y `06-resumen-bloqueo.txt` (los 8
+casos por el camino real, con `stopReason`).
 
 ---
 
+<a name="16"></a>
 ## 16. `cloudfront:GetDistribution` denegado rompe **todo** `sam deploy` (2026-09-09)
 
 **Síntoma.** Un `sam deploy` que sólo cambiaba código Python terminó en `UPDATE_ROLLBACK_COMPLETE`,
@@ -739,6 +801,7 @@ valores hardcodeados (igual que con el account ID del boundary, ver las observac
 
 ---
 
+<a name="17"></a>
 ## 17. La evidencia de S06/S07 estaba **vacía o falsa** y nada avisaba
 
 **Síntoma.** `capture.sh` imprimía `✓` en verde para todos sus archivos, pero tres de ellos no servían:

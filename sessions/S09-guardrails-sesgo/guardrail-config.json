@@ -6,30 +6,87 @@
   "blockedOutputsMessaging": "No puedo responder eso. ¿Te ayudo a encontrar un producto?",
   "contentPolicyConfig": {
     "filtersConfig": [
-      { "type": "HATE", "inputStrength": "HIGH", "outputStrength": "HIGH" },
-      { "type": "INSULTS", "inputStrength": "HIGH", "outputStrength": "HIGH" },
-      { "type": "SEXUAL", "inputStrength": "HIGH", "outputStrength": "HIGH" },
-      { "type": "VIOLENCE", "inputStrength": "MEDIUM", "outputStrength": "MEDIUM" },
-      { "type": "MISCONDUCT", "inputStrength": "HIGH", "outputStrength": "HIGH" },
-      { "type": "PROMPT_ATTACK", "inputStrength": "HIGH", "outputStrength": "NONE" }
+      {
+        "type": "HATE",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "INSULTS",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "SEXUAL",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "VIOLENCE",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM"
+      },
+      {
+        "type": "MISCONDUCT",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "PROMPT_ATTACK",
+        "inputStrength": "HIGH",
+        "outputStrength": "NONE"
+      }
     ]
   },
   "sensitiveInformationPolicyConfig": {
     "piiEntitiesConfig": [
-      { "type": "EMAIL", "action": "ANONYMIZE" },
-      { "type": "PHONE", "action": "ANONYMIZE" },
-      { "type": "CREDIT_DEBIT_CARD_NUMBER", "action": "BLOCK" },
-      { "type": "NAME", "action": "ANONYMIZE" }
-    ]
-  },
-  "topicPolicyConfig": {
-    "topicsConfig": [
       {
-        "name": "AsesoriaFinancieraOMedica",
-        "definition": "Pedidos de consejo financiero, legal o médico, ajenos a la compra de moda.",
-        "examples": ["¿En qué acciones invierto?", "¿Qué medicamento tomo para el dolor?"],
-        "type": "DENY"
+        "type": "EMAIL",
+        "action": "ANONYMIZE"
+      },
+      {
+        "type": "PHONE",
+        "action": "ANONYMIZE"
+      },
+      {
+        "type": "CREDIT_DEBIT_CARD_NUMBER",
+        "action": "BLOCK"
+      },
+      {
+        "type": "NAME",
+        "action": "ANONYMIZE"
       }
     ]
+  },
+  "_comment_topic": "La definition hace el trabajo, NO los examples. Medido con apply-guardrail: la version anterior ('Pedidos de consejo financiero, legal o medico, ajenos a la compra de moda.') bloqueaba 1 de 5 parafrasis y fallaba incluso con sus propios examples. El clasificador matchea contra la REDACCION de la definition, asi que hay que enumerar los sustantivos concretos (criptomonedas, acciones, sintomas...) en vez de describir la categoria en abstracto. Ver docs/TROUBLESHOOTING.md#15.",
+  "topicPolicyConfig": {
+    "_comment_tier": "El tier STANDARD (definiciones largas + multilingue) exige inferencia cross-region, y eso hace que ApplyGuardrail se autorice tambien contra guardrail-profile/*. El boundary techmoda-capstone-boundary NO permite esa accion sobre ese ARN, asi que en esta cuenta STANDARD es inusable: la Lambda muere con AccessDeniedException. Nos quedamos en CLASSIC, con el limite de 200 caracteres en la definition. Ver docs/TROUBLESHOOTING.md#15.",
+    "topicsConfig": [
+      {
+        "name": "AsesoriaFinancieraOLegal",
+        "definition": "Inversiones, criptomonedas, acciones, stocks, bolsa, ahorros, prestamos, impuestos o temas legales. Consejo, opinion o recomendacion de inversion, financiera o legal, en cualquier idioma.",
+        "examples": [
+          "¿En qué acciones invierto?",
+          "¿en qué criptomoneda me conviene invertir mis ahorros este año?",
+          "What stocks should I invest in?",
+          "¿tengo que pagar impuestos por esta compra en el exterior?",
+          "¿me recomendás un seguro para el envío?"
+        ],
+        "type": "DENY"
+      },
+      {
+        "name": "AsesoriaMedica",
+        "definition": "Salud, enfermedades, sintomas, dolores, alergias, medicamentos, dosis, tratamientos o diagnosticos. Pedidos de consejo medico o de que tomar ante un sintoma, en cualquier idioma.",
+        "examples": [
+          "¿Qué medicamento tomo para el dolor de cabeza?",
+          "me duele el estómago, ¿qué me tomo?",
+          "What should I take for a headache?",
+          "¿esta tela me puede causar una alergia en la piel?",
+          "¿cuánto ibuprofeno puedo tomar por día?"
+        ],
+        "type": "DENY"
+      }
+    ],
+    "_comment_split": "DOS temas y no uno. Un solo tema que mezclaba finanzas + salud + legal bloqueaba las parafrasis financieras pero NO las medicas, aun teniendo 'medicamentos' en la definition: el clasificador necesita que cada tema sea UN concepto coherente. Medido: 1 tema = 4/6; 2 temas = 6/6."
   }
 }
