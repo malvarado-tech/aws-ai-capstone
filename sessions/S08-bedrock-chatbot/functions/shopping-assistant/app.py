@@ -148,6 +148,10 @@ def lambda_handler(event, context):
         resp = bedrock.converse(**kwargs)
         reply = resp["output"]["message"]["content"][0]["text"].strip()
         usage = resp.get("usage", {})
+        # Un bloqueo del guardrail llega como 200 con el blockedInputMessaging en el
+        # lugar de la respuesta del modelo; el único indicio es stopReason. Lo
+        # exponemos para que el front (y la evidencia de S9) pueda distinguirlo.
+        stop = resp.get("stopReason")
     except Exception as e:  # noqa: BLE001
         print("Bedrock error:", repr(e))
         return _response(
@@ -165,6 +169,8 @@ def lambda_handler(event, context):
             "reply": reply,
             "retrieved": [{"productId": p["productId"], "name": p.get("name", "")} for p in products],
             "model": CHAT_MODEL_ID,
+            "stopReason": stop,
+            "guardrailBlocked": stop == "guardrail_intervened",
             "usage": usage,
         },
     )

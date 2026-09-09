@@ -124,6 +124,12 @@ def lambda_handler(event, context):
         resp = bedrock.converse(**kwargs)
         text = resp["output"]["message"]["content"][0]["text"].strip()
         usage = resp.get("usage", {})
+        # Cuando el guardrail interviene, Bedrock NO falla: devuelve 200 con el
+        # blockedInputMessaging como si fuera la respuesta del modelo, y avisa sólo
+        # por stopReason. Sin mirarlo, un bloqueo es indistinguible de una
+        # descripción válida — y con save=true se guardaría en aiDescription.
+        stop = resp.get("stopReason")
+        blocked = stop == "guardrail_intervened"
     except Exception as e:  # noqa: BLE001
         print("Bedrock error:", repr(e))
         return _response(
@@ -135,7 +141,8 @@ def lambda_handler(event, context):
             },
         )
 
-    if save:
+    saved = bool(save and not blocked)
+    if saved:
         table.update_item(
             Key={"productId": product_id},
             UpdateExpression="SET aiDescription = :d, aiDescriptionModel = :m",
@@ -148,8 +155,10 @@ def lambda_handler(event, context):
             "productId": product_id,
             "model": MODEL_ID,
             "tone": tone,
-            "saved": save,
+            "saved": saved,
             "description": text,
+            "stopReason": stop,          # 'end_turn' | 'max_tokens' | 'guardrail_intervened'
+            "guardrailBlocked": blocked,  # S9: hace visible la intervención del guardrail
             "usage": usage,  # inputTokens / outputTokens -> útil para costos (S10)
         },
     )

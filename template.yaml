@@ -524,7 +524,19 @@ Outputs:
     Value: !Ref AWS::Region
   FrontendUrl:
     Description: CloudFront URL for the frontend
-    Value: !Sub 'https://${FrontendDistribution.DomainName}'
+    # ⚠️ WORKAROUND DE ENTORNO (2026-09-09) — la forma correcta es la comentada:
+    #   Value: !Sub 'https://${FrontendDistribution.DomainName}'
+    # El boundary `bootcamp-workspace-boundary` del rol del workspace dejó de permitir
+    # `cloudfront:GetDistribution`. CloudFormation resuelve los Outputs con NUESTRA
+    # identidad, así que ese !GetAtt hace fallar TODO `sam deploy` posterior — no en un
+    # recurso, sino al armar los Outputs, y el stack entero termina en
+    # UPDATE_ROLLBACK_COMPLETE revirtiendo cambios que ya se habían aplicado bien.
+    # El dominio de una distribución es fijo mientras la distribución exista, así que
+    # fijarlo desbloquea el deploy sin cambiar nada de la infraestructura.
+    # Restaurá el !GetAtt en cuanto el boundary vuelva a permitir la acción; en una
+    # cuenta sin esa restricción esta línea hay que cambiarla por el dominio propio.
+    # Detalle completo: docs/TROUBLESHOOTING.md.
+    Value: 'https://d42fthdjmstgj.cloudfront.net'
   FrontendBucketName:
     Description: S3 Bucket name for frontend
     Value: !Ref FrontendBucket
