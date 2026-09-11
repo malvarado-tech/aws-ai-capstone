@@ -39,4 +39,7 @@ __pycache__/
 # salidas: contienen las Function URLs en vivo, y esas funciones son AuthType: NONE —
 # cualquiera con la URL puede crear y borrar productos. Ver evidence/README.md.
 evidence/00-entorno/
-evidence/S0*/
+# S0* NO cubre S10/S11 — el glob es literal, no numerico. Con solo `evidence/S0*/`
+# la evidencia de S10 se colo al `git add` (y trae ARNs de roles de otros
+# participantes y el account ID). Un patron por decada, o el glob de abajo.
+evidence/S[0-9]*/

@@ -1140,6 +1140,149 @@ elif [ -z "$ONLY" ] || [ "$ONLY" = "S09" ]; then
   info "S09 no está cableada (falta BEDROCK_GUARDRAIL_ID en la Lambda del asistente)"
 fi
 
+# ============================================================ S10 ===========
+# Gobernanza (D5). No tiene Function URL ni output propio: lo que hay que probar es que
+# los permisos, los tags, la retención y la auditoría están donde deben.
+if [ -z "$ONLY" ] || [ "$ONLY" = "S10" ]; then
+head_ "S10 · IAM, logging y costos (gobernanza)"
+  D="$EV/S10-iam-logging-costos"
+
+  # El repo no debe conceder comodines de servicio. Los hits esperados son COMENTARIOS
+  # que dicen "no a bedrock:*" y los ARN de Bedrock con wildcard de REGIÓN (arn:...:*::
+  # foundation-model/*), que es otra cosa: acota el servicio y la acción, no el permiso.
+  cap "$D/01-auditoria-iam.txt" bash -c "
+    cd '$ROOT'
+    echo '### comodines de ACCIÓN (servicio:*) — no debe haber ninguno fuera de comentarios'
+    grep -rn 'Action:.*bedrock:\*\|Action:.*rekognition:\*\|Action:.*comprehend:\*\|Action:.*translate:\*\|Action:.*polly:\*\|Action:.*dynamodb:\*\|Action:.*s3:\*' \
+      template.yaml sessions/S*/template-snippet.yaml 2>/dev/null || echo '  (sin hits ✅)'
+    echo
+    echo '### Resource: \"*\" — sólo para APIs que NO admiten ARN de recurso'
+    grep -n -B6 'Resource: \"\*\"' template.yaml | grep -E 'Action|Resource: \"' | sed 's/^/  /'
+  "
+
+  # El rol de CADA función, con sus policies completas. Es el artefacto de D5: se ve que
+  # ModerateImage puede moderar y EnrichLabels no, con el mismo servicio detrás.
+  cap "$D/02-iam-todos-los-roles.txt" iam_dump \
+        "$STACK-Router" "$STACK-EnrichLabels" "$STACK-ModerateImage" \
+        "$STACK-AnalyzeSentiment" "$STACK-TranslateCatalog" "$STACK-SynthesizeVoice" \
+        "$STACK-GenerateDescription" "$STACK-IndexEmbeddings" "$STACK-SemanticSearch" \
+        "$STACK-ShoppingAssistant"
+
+  cap "$D/03-tags-de-costo.txt" bash -c "
+    for fn in Router EnrichLabels ModerateImage AnalyzeSentiment TranslateCatalog \
+              SynthesizeVoice GenerateDescription IndexEmbeddings SemanticSearch ShoppingAssistant; do
+      t=\$(aws lambda list-tags \
+            --resource 'arn:aws:lambda:$REGION:$(aws sts get-caller-identity --query Account --output text):function:$STACK-'\$fn \
+            --query 'Tags.{Project:Project,Module:Module,Environment:Environment}' \
+            --output json 2>/dev/null | tr -d '\n ')
+      printf '%-22s %s\n' \"\$fn\" \"\$t\"
+    done
+    echo
+    echo 'Los tags NO aparecen en Cost Explorer hasta activarlos en'
+    echo 'Billing > Cost Allocation Tags, y sólo etiquetan desde ese momento.'
+  "
+
+  # Retención: el default de un log group creado por Lambda es None = para siempre.
+  cap "$D/04-retencion-de-logs.txt" bash -c "
+    printf '%-74s %s\n' 'LOG GROUP' 'RETENCIÓN(días)'
+    aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/$STACK' \
+      --region '$REGION' --query 'logGroups[].[logGroupName,retentionInDays]' --output text \
+      | while read -r n r; do printf '%-74s %s\n' \"\$n\" \"\$r\"; done
+    aws logs describe-log-groups --log-group-name-prefix '/techmoda/$STACK' \
+      --region '$REGION' --query 'logGroups[].[logGroupName,retentionInDays]' --output text \
+      | while read -r n r; do printf '%-74s %s\n' \"\$n\" \"\$r\"; done
+    echo
+    echo 'Fijado con sessions/S10-iam-logging-costos/set-log-retention.sh — no por el'
+    echo 'template: Lambda crea /aws/lambda/<fn> sola en la primera invocación, con'
+    echo 'retención None, y declararla después en CloudFormation falla por already exists.'
+  "
+
+  # LA configuración de auditoría de Bedrock. Es por CUENTA/REGIÓN: una sola para todos.
+  cap "$D/05-invocation-logging-cuenta.json" aws bedrock \
+        get-model-invocation-logging-configuration --region "$REGION" --output json
+
+  # El hallazgo de S10: esa única configuración compartida apunta al log group de OTRO
+  # participante, así que nuestras invocaciones (prompts y respuestas) terminan ahí.
+  # Se leen sólo las IDENTIDADES y los conteos, nunca el contenido de terceros.
+  cap "$D/06-blast-radius-logging.txt" bash -c "
+    LG=\$(aws bedrock get-model-invocation-logging-configuration --region '$REGION' \
+           --query 'loggingConfig.cloudWatchConfig.logGroupName' --output text 2>/dev/null)
+    echo \"log group configurado a nivel CUENTA/REGIÓN: \$LG\"
+    echo \"nuestro stack:                              $STACK\"
+    case \"\$LG\" in
+      */$STACK/*) echo 'estado: es NUESTRO log group ✅' ;;
+      *)          echo 'estado: NO es nuestro — nuestras invocaciones se escriben en un log group ajeno ⚠️' ;;
+    esac
+    echo
+    aws logs describe-log-groups --log-group-name-prefix \"\$LG\" --region '$REGION' \
+      --query 'logGroups[].[retentionInDays,storedBytes]' --output text \
+      | while read -r r b; do echo \"retención: \${r:-None}    bytes almacenados: \$b\"; done
+    echo
+    # --no-paginate: sin esto la CLI pagina y `length(events)` imprime UN NÚMERO POR
+    # PÁGINA (una columna de ceros que parece 'no hay nada'), en vez del total.
+    echo -n 'invocaciones de NUESTRO stack que quedaron ahí (48 h): '
+    aws logs filter-log-events --log-group-name \"\$LG\" --region '$REGION' \
+      --filter-pattern '$STACK' --no-paginate \
+      --start-time \$(( (\$(date -u +%s) - 172800) * 1000 )) \
+      --query 'length(events)' --output text 2>/dev/null || echo '(sin acceso)'
+    echo
+    echo 'identidades distintas que escriben en ese log group (sólo el ARN, no el contenido):'
+    aws logs filter-log-events --log-group-name \"\$LG\" --region '$REGION' \
+      --start-time \$(( (\$(date -u +%s) - 86400) * 1000 )) --max-items 400 \
+      --query 'events[].message' --output text 2>/dev/null \
+      | python3 -c \"
+import sys, json
+ids = set()
+for line in sys.stdin.read().split(chr(9)):
+    line = line.strip()
+    if not line.startswith('{'):
+        continue
+    try:
+        arn = str(json.loads(line).get('identity', {}).get('arn', ''))
+    except Exception:
+        continue
+    if arn:
+        ids.add(arn.split('/')[-2] if '/' in arn else arn)
+for i in sorted(ids):
+    print('  ', i[:100])
+print(f'total: {len(ids)} identidades')
+\"
+  "
+
+  # FinOps real: lo que ya costó, en tokens, sacado de la evidencia de S06 y S08.
+  cap "$D/07-uso-de-tokens.txt" python3 -c "
+import json, pathlib
+ev = pathlib.Path('$EV')
+def carga(p):
+    if not p.exists(): return None
+    txt = '\n'.join(l for l in p.read_text().splitlines() if not l.startswith('#'))
+    try: return json.loads(txt)
+    except Exception: return None
+tot_in = tot_out = 0
+for etiqueta, ruta, campo in [
+    ('S06 descripciones', 'S06-bedrock-descripciones/04-descripciones-tres-tonos.json', None),
+    ('S08 chatbot (RAG)', 'S08-bedrock-chatbot/03-consultas-rag.json', None),
+    ('S09 pruebas guardrail', 'S09-guardrails-sesgo/05-pruebas-bloqueo.json', 'respuesta'),
+]:
+    d = carga(ev / ruta)
+    if not d:
+        print(f'{etiqueta:24} (sin evidencia capturada)'); continue
+    i = o = n = 0
+    for v in d.values():
+        v = v.get(campo, v) if campo else v
+        u = (v or {}).get('usage') or {}
+        if u: i += u.get('inputTokens', 0); o += u.get('outputTokens', 0); n += 1
+    tot_in += i; tot_out += o
+    print(f'{etiqueta:24} {n:2d} llamadas   {i:6d} in   {o:6d} out')
+print()
+print(f'{\"TOTAL medido\":24}            {tot_in:6d} in   {tot_out:6d} out')
+print()
+print('Los tokens son la unidad de costo de S06/S08/S09; S01-S02 se cobran por IMAGEN,')
+print('S03/S04 por CARÁCTER y S05 por carácter sintetizado. El guardrail se cobra aparte,')
+print('por contenido evaluado, y evalúa entrada Y salida. Verificar precios oficiales.')
+"
+fi
+
 if [ -z "$ONLY" ]; then
 head_ "Sesiones pendientes"
   for pair in "S02:ModerateImageUrl" "S03:AnalyzeSentimentUrl" "S04:TranslateCatalogUrl" \

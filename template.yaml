@@ -27,6 +27,14 @@ Globals:
     MemorySize: 1024
     Runtime: nodejs22.x
     Tracing: Active
+    # S10 · Cost allocation tags. Van en Globals para que las hereden las 10 funciones
+    # sin repetirlas. Un tag NO sirve hasta activarlo en Billing > Cost Allocation Tags
+    # (es una acción de consola, por cuenta, y tarda hasta 24 h en aparecer en Cost
+    # Explorer): el tag empieza a etiquetar desde que se activa, no retroactivamente.
+    Tags:
+      Project: techmoda-ai-capstone
+      Module: ai-practitioner
+      Environment: sandbox
     Environment:
       Variables:
         PRODUCTS_TABLE: !Ref ProductsTable
@@ -515,6 +523,62 @@ Resources:
           - ErrorCode: 403
             ResponseCode: 200
             ResponsePagePath: /index.html
+
+  # ---------------------------------------------------------------------------
+  # S10 · Gobernanza: alarma de costo + log group de auditoría (dominio D5).
+  # Pegado desde sessions/S10-iam-logging-costos/template-snippet-governance.yaml.
+  # ---------------------------------------------------------------------------
+
+  # ⚠️ LA ALARMA DE COSTO NO SE PUEDE CREAR EN ESTA CUENTA — queda como patrón.
+  # Se intentó y el stack entero hizo rollback:
+  #   cloudwatch:PutMetricAlarm  -> "because no permissions boundary allows"
+  #   budgets:ViewBudget         -> "with an explicit deny in a permissions boundary"
+  # Las dos formas del mensaje importan y entran en D5 (ver docs/TROUBLESHOOTING.md#19):
+  #   "no identity-based policy allows"        -> falta en el ROL. Se arregla.
+  #   "no permissions boundary allows"         -> el boundary no lo permite. NO se arregla.
+  #   "explicit deny in a permissions boundary"-> el boundary lo DENIEGA. Menos que nada.
+  # Un Deny explícito gana siempre, incluso contra un Allow del rol: es la regla de
+  # evaluación de IAM y es exactamente lo que pregunta el examen.
+  #
+  # Descomentar en una cuenta donde el techo lo permita. Notas del patrón:
+  #  - AWS/Billing sólo existe en us-east-1; en otra región la alarma se queda en
+  #    INSUFFICIENT_DATA para siempre, que es la forma silenciosa de no tener alarma.
+  #  - EstimatedCharges es de la CUENTA COMPLETA, no del stack: en una cuenta compartida
+  #    mide el gasto de todos. Para atribuir el propio, tag Project + Cost Explorer.
+  #  - Sin AlarmActions (un topic SNS) no notifica a nadie: sólo cambia de estado.
+  #
+  # AiCostAlarm:
+  #   Type: AWS::CloudWatch::Alarm
+  #   Properties:
+  #     AlarmName: !Sub ${AWS::StackName}-estimated-charges
+  #     Namespace: AWS/Billing
+  #     MetricName: EstimatedCharges
+  #     Dimensions:
+  #       - Name: Currency
+  #         Value: USD
+  #     Statistic: Maximum
+  #     Period: 21600
+  #     EvaluationPeriods: 1
+  #     Threshold: 5
+  #     ComparisonOperator: GreaterThanThreshold
+  #     TreatMissingData: notBreaching
+
+  # Destino de auditoría para el model invocation logging de Bedrock.
+  #
+  # ⚠️ Hoy este log group queda VACÍO a propósito. El invocation logging es
+  # configuración por CUENTA/REGIÓN (una sola, para todos), y en esta cuenta ya está
+  # habilitada apuntando al log group de otro participante. Sobreescribirla le cortaría
+  # la auditoría a él y a las cargas de producción que comparten la cuenta, así que no
+  # se toca. Ver docs/TROUBLESHOOTING.md#18.
+  #
+  # RetentionInDays es la parte que sí aporta: el log group ajeno está en `None`
+  # (retención infinita) y ya lleva ~69 MB de prompts y respuestas de 11 identidades
+  # distintas. Los log groups que Lambda crea solo también nacen sin retención.
+  BedrockInvocationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /techmoda/${AWS::StackName}/bedrock-invocations
+      RetentionInDays: 30    # FinOps + privacidad: los logs de IA no se guardan para siempre
 
 Outputs:
   ApiUrl:

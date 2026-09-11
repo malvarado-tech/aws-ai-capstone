@@ -50,7 +50,23 @@ def _response(status, body):
     }
 
 
-def _build_prompt(item, tone):
+# Las instrucciones van en el campo `system`, NO dentro del mensaje del usuario.
+# Con el guardrail de S9 activo eso no es cosmético: el filtro PROMPT_ATTACK clasifica
+# como inyección cualquier texto que dé órdenes al modelo ("Sos un redactor…",
+# "No uses emojis") — que es literalmente la forma de una inyección. Con las
+# instrucciones dentro del mensaje del usuario, el guardrail bloqueaba el 100 % de las
+# descripciones: 3 de 3, con usage en 0 (se corta ANTES de invocar al modelo).
+# Medido con apply-guardrail: sólo las instrucciones -> filters: [PROMPT_ATTACK];
+# sólo los atributos -> NONE. Ver docs/TROUBLESHOOTING.md#20.
+SYSTEM_PROMPT = (
+    "Sos un redactor de e-commerce de moda. Escribí UNA descripción de producto en "
+    "español, de 2 a 3 frases, atractiva y honesta: no inventes materiales ni datos que "
+    "no estén en los atributos que te dan. No uses emojis. No repitas el precio. "
+    "Respondé sólo con la descripción, sin preámbulo."
+)
+
+
+def _build_attrs(item):
     labels = ", ".join(item.get("aiLabels", []) or [])
     attrs = [
         f"Nombre: {item.get('name', '')}",
@@ -59,13 +75,23 @@ def _build_prompt(item, tone):
     ]
     if labels:
         attrs.append(f"Atributos visuales detectados: {labels}")
-    attrs_text = "\n".join(attrs)
-    return (
-        "Sos un redactor de e-commerce de moda. Escribí UNA descripción de producto en español, "
-        f"con tono {tone}, de 2 a 3 frases, atractiva y honesta (no inventes materiales ni datos "
-        "que no estén en los atributos). No uses emojis. No repitas el precio.\n\n"
-        f"Atributos del producto:\n{attrs_text}\n\nDescripción:"
-    )
+    return "Atributos del producto:\n" + "\n".join(attrs)
+
+
+def _build_messages(item, tone):
+    """El tono lo elige quien llama (viene del body), así que es entrada NO confiable:
+    va en un bloque `guardContent` para que el guardrail evalúe eso y no nuestro prompt.
+    Los atributos salen de nuestra propia tabla, así que van como texto normal."""
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"text": _build_attrs(item)},
+                {"text": "Tono pedido:"},
+                {"guardContent": {"text": {"text": tone, "qualifiers": ["guard_content"]}}},
+            ],
+        }
+    ]
 
 
 def _path_id(event):
@@ -108,12 +134,11 @@ def lambda_handler(event, context):
     if not item:
         return _response(404, {"error": f"Producto {product_id} no encontrado."})
 
-    prompt = _build_prompt(item, tone)
-
     try:
         kwargs = {
             "modelId": MODEL_ID,
-            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "system": [{"text": SYSTEM_PROMPT}],
+            "messages": _build_messages(item, tone),
             "inferenceConfig": {"maxTokens": MAX_TOKENS, "temperature": TEMPERATURE},
         }
         if GUARDRAIL_ID:

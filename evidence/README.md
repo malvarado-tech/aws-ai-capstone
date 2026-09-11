@@ -314,6 +314,69 @@ aparece en ese camino.
 límite defendible es la acción: este rol puede hacer `DetectLabels` y nada más, ni `DetectFaces` ni las
 APIs de colecciones de caras.
 
+### `S10-iam-logging-costos/` — gobernanza: IAM, logging y costos
+
+| Archivo | Qué prueba |
+|---|---|
+| `01-auditoria-iam.txt` | ningún `servicio:*` en el repo; los `Resource:"*"` que quedan, con la acción que los justifica |
+| `02-iam-todos-los-roles.txt` | los **10** roles con sus policies inline completas — el artefacto central de D5 |
+| `03-tags-de-costo.txt` | `Project`/`Module`/`Environment` en las 10 funciones |
+| `04-retencion-de-logs.txt` | los 11 log groups con su `retentionInDays` |
+| `05-invocation-logging-cuenta.json` | la configuración de auditoría de Bedrock, tal como está en la cuenta |
+| `06-blast-radius-logging.txt` | a quién apunta esa configuración, con qué retención, y qué identidades escriben ahí |
+| `07-uso-de-tokens.txt` | tokens realmente consumidos por sesión, sumados desde la evidencia de S06/S08/S09 |
+
+**S10 no agrega una feature: audita las nueve anteriores.** No tiene Function URL ni output propio, así
+que lo que hay que poder mostrar es que los permisos, los tags, la retención y la auditoría están donde
+deben. D5 (Security, Compliance & Governance, 14% del examen).
+
+**`02-…` es el archivo que responde la pregunta de D5.** Se ve el patrón *una Lambda = un servicio = un
+rol* en los 10 roles a la vez, y sobre todo la asimetría: `ModerateImage` puede
+`rekognition:DetectModerationLabels`, `EnrichLabels` **no** — mismo servicio, límites distintos.
+`IndexEmbeddings` escribe la tabla, `SemanticSearch` sólo la lee. Eso es acotar por acción y por recurso,
+no por servicio.
+
+**Sobre los `Resource: "*"` que sobreviven** (`01-…`): son cinco, y todos son APIs `Detect*`/`Synthesize*`
+de Rekognition, Comprehend, Translate y Polly, que **no admiten ARN de recurso** — no hay ARN para "una
+imagen que estás por mandar". Cuando el servicio no permite acotar el recurso, el límite defendible es la
+**acción**. Bedrock sí admite ARN y por eso ahí sí se acota (aunque a `foundation-model/*`, no al modelo
+concreto — ver la nota de S06).
+
+**La retención era infinita en los 11 log groups** (`04-…`). Lambda crea `/aws/lambda/<función>` sola en
+la primera invocación, con `retentionInDays: None`, así que no se puede arreglar desde el template una vez
+que existe (`already exists`): lo hace
+[`../sessions/S10-iam-logging-costos/set-log-retention.sh`](../sessions/S10-iam-logging-costos/set-log-retention.sh).
+No es sólo costo: los logs de IA guardan el texto que escribió el usuario, así que retención infinita es
+también un problema de privacidad (minimización y plazo de conservación).
+
+**El hallazgo de S10 está en `06-…`.** El model invocation logging de Bedrock es **una sola configuración
+por cuenta y región**, y en esta cuenta ya estaba habilitada apuntando al stack de otro participante, con
+retención `None` y ~69 MB acumulados de prompts y respuestas de **11 identidades distintas** — incluidas
+cargas de **producción** de la cuenta. 132 de nuestras invocaciones quedaron ahí. A mitad de la sesión la
+configuración cambió sola a otro log group: 280 participantes se pisan una única variable global.
+
+**No la sobreescribimos**, aunque el script de la sesión lo haría en un comando: eso le habría cortado la
+auditoría al compañero y a producción. El stack declara su propio destino con retención de 30 días y queda
+vacío a propósito. Detalle en [TROUBLESHOOTING #18](../docs/TROUBLESHOOTING.md#18) — es un tema para
+escalar al instructor, no para arreglar desde el workspace.
+
+**La alarma de costo no se puede crear acá**, y el intento hizo rollback del stack completo. Quedó como
+patrón comentado en `template.yaml` junto con las tres formas de `AccessDenied` que aparecieron de verdad
+en esta cuenta y que conviene saber distinguir
+([TROUBLESHOOTING #19](../docs/TROUBLESHOOTING.md#19)):
+
+```
+"no identity-based policy allows"           -> falta en el ROL.  ✅ se arregla
+"no permissions boundary allows"            -> el boundary no lo permite.  ❌
+"explicit deny in a permissions boundary"   -> el boundary lo DENIEGA.  ❌ y un Deny gana siempre
+```
+
+**`07-…` fue lo que destapó el bug de S06.** Sumar tokens por sesión dio `0 in / 0 out` en las tres
+descripciones, que en una sesión generativa es imposible: el guardrail venía bloqueando el **100 %** de
+S06 desde tres commits atrás, porque `PROMPT_ATTACK` leía nuestras propias instrucciones como una
+inyección. `usage: 0` es la firma de un corte **en la entrada** — el modelo nunca se invocó.
+[TROUBLESHOOTING #20](../docs/TROUBLESHOOTING.md#20).
+
 ## Cómo leer los resultados de S01
 
 Las etiquetas medidas están en `05-detect-labels-resumen.txt`. Dos merecen atención:
