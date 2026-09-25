@@ -8,7 +8,14 @@ Flujo:
     1. Lee name + description del producto (usa la traducción si pide "en" y existe).
     2. Amazon Polly convierte el texto a audio MP3 (voz neuronal).
     3. Sube el MP3 a un bucket de audio y genera una URL prefirmada (1 h).
-    4. Guarda audioUrl en el producto y la devuelve.
+    4. Guarda **audioKey** (la clave S3) en el producto y devuelve la URL prefirmada.
+
+    OJO: la URL prefirmada NO se persiste — vive 3600 s y después no sirve. En
+    DynamoDB queda sólo `audioKey`, y el bucket es privado, así que esa clave por
+    sí sola no se puede reproducir desde el browser: para volver a escuchar el
+    audio hay que llamar de nuevo a este endpoint. (Además la regla de ciclo de
+    vida del bucket borra el MP3 a los 7 días, así que `audioKey` puede apuntar a
+    un objeto que ya no existe.)
 
 Servicio de IA: Amazon Polly (texto a voz neuronal).
 Dominio AIF-C01: D1 (capacidad) + D4 (accesibilidad).
