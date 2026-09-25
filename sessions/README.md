@@ -74,20 +74,27 @@ La tabla completa (qué política lleva cada Lambda y por qué) está en
 
 ## Estado verificado
 
-**Servicios de IA end-to-end (2026-06-18)** — cada llamada probada contra el servicio real:
+**Servicios de IA end-to-end** — cada llamada probada contra el servicio real, con los roles de
+mínimo privilegio que genera SAM. La salida cruda de cada corrida está versionada en
+[`evidence/`](../evidence/README.md) (una carpeta por sesión), no son capturas de pantalla.
 
-| Sesión | Llamada | Resultado |
-|---|---|---|
-| S01/S02 | Rekognition `DetectLabels` / `DetectModerationLabels` | ✅ |
-| S03 | Comprehend `DetectSentiment` | ✅ |
-| S04 | `translate:TranslateText` | ✅ traducción ES→EN |
-| S05 | Polly `SynthesizeSpeech` + URL prefirmada | ✅ |
-| S06 | Bedrock Converse (Claude Haiku) | ✅ descripción generada |
-| S07/S08 | Bedrock `amazon.titan-embed-text-v2:0` (InvokeModel) | ✅ embedding de 1024 dims |
-| S09 | Bedrock Guardrails | ✅ API con acceso |
+| Sesión | Llamada | Resultado | Evidencia |
+|---|---|---|---|
+| S01/S02 | Rekognition `DetectLabels` / `DetectModerationLabels` | ✅ | `evidence/S01…`, `S02…` |
+| S03 | Comprehend `DetectSentiment` | ✅ | `evidence/S03…` |
+| S04 | `translate:TranslateText` | ✅ traducción ES→EN | `evidence/S04…` |
+| S05 | Polly `SynthesizeSpeech` + URL prefirmada | ✅ | `evidence/S05…` |
+| S06 | Bedrock Converse (Claude Haiku) | ✅ descripción generada | `evidence/S06…` |
+| S07/S08 | Bedrock `amazon.titan-embed-text-v2:0` (InvokeModel) | ✅ embedding de 1024 dims | `evidence/S07…`, `S08…` |
+| S09 | Bedrock Guardrails (`ApplyGuardrail` + `guardrailConfig`) | ✅ 5/5 bloqueos esperados, 3/3 permitidos | `evidence/S09…` |
+| S10 | Auditoría IAM · tags de costo · retención de logs | ✅ 0 comodines de acción | `evidence/S10…` |
+| S11 | Demo end-to-end | 🟡 `demo.sh` listo, **sin corrida capturada** | — |
 
-⚠️ **Pendiente de verificar:** el refactor a roles de mínimo privilegio (`Policies:` por función)
-**no se ha probado en la nube todavía**. Las llamadas de arriba se validaron cuando las Lambdas
-usaban un rol compartido y amplio; que los roles generados por SAM alcancen en runtime es lo que
-falta confirmar. Correr `bash scripts/validate-all.sh` (modo completo) contra un stack desplegado
-es lo que cierra ese hueco.
+✅ **El refactor a roles de mínimo privilegio está verificado en la nube.** Las 12 sesiones corrieron
+con los roles que genera SAM (uno por función), no con un rol compartido. La auditoría de S10
+(`evidence/S10-iam-logging-costos/01-auditoria-iam.txt`) confirma que no queda ningún comodín de
+acción (`bedrock:*`, `rekognition:*`, …) y que cada `Resource: "*"` restante corresponde a una API que
+no admite ARN.
+
+⚠️ **Lo que falta:** S11 — correr `demo.sh` de punta a punta y capturar su salida en
+`evidence/S11-integracion-demo-cleanup/`. `evidence/capture.sh` **todavía no tiene bloque para S11**.

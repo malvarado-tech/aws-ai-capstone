@@ -6,7 +6,14 @@
 # S10 · IAM mínimo privilegio para IA, logging de invocación y control de costos
 
 **Duración:** ~60 min · **Servicio:** — (gobernanza transversal) · **Dominio AIF-C01:** **D5 — Security, Compliance & Governance (14%)**
-**Estado:** 🟡 Guía detallada + scaffold (snippet de gobernanza + scripts listos).
+**Estado:** ✅ Completa y verificada en vivo (2026-09-11). La gobernanza está **aplicada** en
+`template.yaml`: tags de costo (`Project`, `Module`) en `Globals` y el log group
+`/techmoda/${AWS::StackName}/bedrock-invocations` con `RetentionInDays: 30`. Evidencia en
+[`evidence/S10-iam-logging-costos/`](../../evidence/S10-iam-logging-costos/): la auditoría IAM no
+encuentra **ningún** comodín de acción (`servicio:*`), y los `Resource: "*"` que quedan son sólo los de
+las APIs que no admiten ARN. Los dos hallazgos incómodos — el invocation logging es **uno por
+cuenta/región** y lo pelean 280 personas, y la alarma de costo puede hacer rollback del stack — están
+en [`docs/TROUBLESHOOTING.md`](../../docs/TROUBLESHOOTING.md) #18 y #19.
 
 ---
 
@@ -69,7 +76,7 @@ A lo largo del proyecto aplicamos un patrón consistente. Repasalo, porque **es 
 
 ---
 
-## 🚶 Paso a paso (scaffold)
+## 🚶 Paso a paso
 
 1. **Auditar IAM:** revisá cada `template-snippet.yaml` y confirmá que ninguna policy usa `*` de servicio.
    ```bash

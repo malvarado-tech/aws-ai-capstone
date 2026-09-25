@@ -7,7 +7,14 @@
 # S9 · Guardrails, sesgo y privacidad en las features de IA (Bedrock Guardrails)
 
 **Duración:** ~60 min · **Servicio:** Amazon Bedrock Guardrails · **Dominio AIF-C01:** **D4 — Responsible AI (14%)**
-**Estado:** 🟡 Guía detallada + scaffold (config + script listos; el cableado a converse lo completás en la sesión).
+**Estado:** ✅ Completa y verificada en vivo (2026-09-09). El guardrail está creado y **cableado** a las
+Lambdas de S6 y S8 vía `guardrailConfig` + `guardContent`; `template.yaml` fija `BEDROCK_GUARDRAIL_ID` y
+`BEDROCK_GUARDRAIL_VERSION`, y el rol lleva `bedrock:ApplyGuardrail`. Evidencia medida en
+[`evidence/S09-guardrails-sesgo/`](../../evidence/S09-guardrails-sesgo/): 5 de 5 consultas que deben
+bloquearse dan `stopReason: guardrail_intervened`, y 3 de 3 consultas legítimas que *rozan* temas
+denegados (precio, material) pasan con `end_turn`. Las tres trampas que aparecieron en el camino están
+en [`docs/TROUBLESHOOTING.md`](../../docs/TROUBLESHOOTING.md) #14, #15 y #20 — leelas, son el contenido
+de la sesión.
 
 > 🔌 **Cómo se expone:** el guardrail protege la función del asistente de S8, que tiene su propia
 > **Lambda Function URL** (no API Gateway) y su **rol de mínimo privilegio creado por SAM** — ver
@@ -64,7 +71,7 @@ género). Mitigaciones que el examen espera que conozcas:
 
 ---
 
-## 🚶 Paso a paso (scaffold → completar)
+## 🚶 Paso a paso
 
 ### 1. Crear el guardrail
 ```bash

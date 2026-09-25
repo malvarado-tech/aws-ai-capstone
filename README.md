@@ -53,13 +53,18 @@ Al terminar las 12 sesiones, TechModa:
 | **S6** | [Generar descripciones desde atributos](sessions/S06-bedrock-descripciones/GUIA.md) | Bedrock `InvokeModel` | D2 (24%) | ✅ Completa |
 | **S7** | [Búsqueda semántica / RAG sobre el catálogo](sessions/S07-bedrock-rag-busqueda/GUIA.md) | Bedrock embeddings | D3 (28%) | ✅ Completa |
 | **S8** | [Asistente de compras (chatbot)](sessions/S08-bedrock-chatbot/GUIA.md) | Bedrock + prompt engineering | D2 + D3 | ✅ Completa |
-| **S9** | [Guardrails, sesgo y privacidad](sessions/S09-guardrails-sesgo/GUIA.md) | Bedrock Guardrails | D4 (14%) | 🟡 Guía detallada + scaffold |
-| **S10** | [IAM mínimo privilegio, logging, costos](sessions/S10-iam-logging-costos/GUIA.md) | — (gobernanza) | D5 (14%) | 🟡 Guía detallada + scaffold |
-| **S11** | [Integración final, demo, documentación, cleanup](sessions/S11-integracion-demo-cleanup/GUIA.md) | — (cierre) | Todos | 🟡 Guía detallada + scripts |
+| **S9** | [Guardrails, sesgo y privacidad](sessions/S09-guardrails-sesgo/GUIA.md) | Bedrock Guardrails | D4 (14%) | ✅ Completa |
+| **S10** | [IAM mínimo privilegio, logging, costos](sessions/S10-iam-logging-costos/GUIA.md) | — (gobernanza) | D5 (14%) | ✅ Completa |
+| **S11** | [Integración final, demo, documentación, cleanup](sessions/S11-integracion-demo-cleanup/GUIA.md) | — (cierre) | Todos | 🟡 Guía + `demo.sh`, sin evidencia capturada |
 
 > **Leyenda de estado**
-> ✅ **Completa** = código funcional (Lambda Python + boto3), snippet de `template.yaml` listo para pegar, y GUIA.md paso a paso.
-> 🟡 **Guía + scaffold** = GUIA.md detallada con conceptos, pasos y "qué entra en el examen", más esqueleto de código/política para completar en la sesión.
+> ✅ **Completa** = código funcional, cableado en `template.yaml`, GUIA.md paso a paso **y evidencia de
+> ejecución real** en [`evidence/`](evidence/README.md).
+> 🟡 = GUIA.md detallada y scripts listos, pero **todavía no se corrió de punta a punta** dejando evidencia.
+>
+> S9 no agrega una Lambda: crea el guardrail con [`create-guardrail.sh`](sessions/S09-guardrails-sesgo/create-guardrail.sh)
+> y lo cablea a las Lambdas de S6 y S8 vía `guardrailConfig` + `BEDROCK_GUARDRAIL_ID`.
+> S10 tampoco: agrega tags de costo en `Globals` y el log group de invocaciones de Bedrock.
 
 ---
 
@@ -162,14 +167,22 @@ La salida del stack te da `ApiUrl` (la **Lambda Function URL** del router, forma
 `https://<id>.lambda-url.us-east-1.on.aws/`) y `FrontendUrl`. Ábrelos y verás el catálogo de TechModa.
 Detalle completo y validación en **[sessions/S00-base/GUIA.md](sessions/S00-base/GUIA.md)**.
 
+> ⚠️ **En este repo `template.yaml` ya NO es "solo S0".** Las sesiones S1–S10 se recorrieron por la
+> ruta progresiva y sus snippets quedaron **pegados y committeados**: hoy `template.yaml` tiene los
+> mismos recursos que `template.full.yaml` (base + S1–S8 + guardrail de S9 cableado + gobernanza de
+> S10). Desplegarlo tal cual levanta **todo**.
+>
 > 🧩 **Dos formas de llegar al mismo resultado:**
-> - **Progresiva (recomendada, pedagógica):** desplegás `template.yaml` (solo S0) y vas pegando el
->   `template-snippet.yaml` de cada sesión, una por hora. Así "ves crecer" la arquitectura.
-> - **Todo junto:** `sam build -t template.full.yaml && sam deploy -t template.full.yaml --stack-name techmoda-ai
->   --region us-east-1 --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --resolve-s3 --no-confirm-changeset`
->   despliega la base + las 8 features de IA (S1–S8) + gobernanza (S10) ya cableadas, cada una con su
->   Function URL. Útil para una demo rápida o para revisar el resultado final.
->   Este archivo está **validado con `sam validate --lint`**.
+> - **Todo junto (el estado actual):** `sam build && sam deploy …` con `template.yaml`. Levanta base +
+>   las 8 features de IA + guardrail + gobernanza, cada una con su Function URL.
+> - **Progresiva (pedagógica):** para "ver crecer" la arquitectura hay que **partir de un
+>   `template.yaml` con solo S0** (`git show 615dffe:template.yaml`, el último commit antes de pegar
+>   S01) y
+>   después pegar el `template-snippet.yaml` de cada sesión, una por hora. Si pegás un snippet sobre
+>   el `template.yaml` actual, CloudFormation falla por **clave duplicada**: el recurso ya está.
+>
+> `template.full.yaml` y `template.sandbox.yaml` siguen existiendo y están **validados con
+> `sam validate --lint`**; `template.full.yaml` es hoy equivalente a `template.yaml`.
 >
 > ℹ️ Las Lambdas CRUD base usan **`nodejs22.x`** (la `nodejs18.x` del starter original quedó deprecada y su
 > creación está deshabilitada en AWS desde 2026-02). Las Lambdas de IA usan **`python3.12`**.
@@ -202,7 +215,7 @@ Detalles: **[docs/COST_AND_CLEANUP.md](docs/COST_AND_CLEANUP.md)** y **[sessions
 techmoda-ai-capstone/
 ├── README.md                  # este archivo
 ├── README-BASE-SERVERLESS.md  # docs del capstone serverless base (sin IA)
-├── template.yaml              # SAM base (S0). Cada sesión agrega su snippet aquí.
+├── template.yaml              # SAM: base + S1–S8 + guardrail S9 + gobernanza S10 (ya pegados)
 ├── samconfig.us-east-1.example
 ├── functions/                 # 5 Lambdas CRUD Node.js + router/ (1 Function URL, base S0)
 ├── frontend/                  # React + Vite (base S0)
@@ -216,7 +229,9 @@ techmoda-ai-capstone/
     │   ├── functions/enrich-labels/        # Lambda Python + boto3
     │   └── template-snippet.yaml           # recurso + Function URL + Policies: acotadas
     ├── S02-... S08-...                      # mismo patrón
-    └── S09 / S10 / S11                       # guía + scaffold/scripts
+    ├── S09-guardrails-sesgo/                 # guía + create-guardrail.sh + config (sin Lambda)
+    ├── S10-iam-logging-costos/               # guía + snippet de gobernanza + scripts
+    └── S11-integracion-demo-cleanup/         # guía + demo.sh
 ```
 
 **Flujo recomendado:** seguí las sesiones **en orden** (cada una asume la anterior). Para cada sesión:
