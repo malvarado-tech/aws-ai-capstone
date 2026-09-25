@@ -43,3 +43,6 @@ evidence/00-entorno/
 # la evidencia de S10 se colo al `git add` (y trae ARNs de roles de otros
 # participantes y el account ID). Un patron por decada, o el glob de abajo.
 evidence/S[0-9]*/
+
+# Instrucciones internas de Claude Code — no se publican
+CLAUDE.md
