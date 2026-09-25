@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Store, Settings, Search, Plus, Loader2, Globe } from 'lucide-react';
+import { Store, Settings, Search, Plus, Loader2, Globe, MessageCircle, X } from 'lucide-react';
 import { ProductCard } from './components/ProductCard';
 import { ProductModal } from './components/ProductModal';
+import { ProductAIPanel } from './components/ProductAIPanel';
+import { ProductAudio } from './components/ProductAudio';
+import { SentimentPanel } from './components/SentimentPanel';
+import { SemanticSearch } from './components/SemanticSearch';
+import { ShoppingAssistant } from './components/ShoppingAssistant';
+import { AdminAIOps } from './components/AdminAIOps';
 import { useProducts } from './hooks/useProducts';
 import type { Product } from './lib/types';
 
@@ -13,7 +19,24 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('Todos');
 
-  const { products, loading, error, createProduct, updateProduct, deleteProduct } = useProducts();
+  // ---- Estado de las capacidades de IA ----
+  // `aiProductId` y no el producto entero: después de un enriquecimiento hacemos
+  // refetch y el objeto cambia de identidad. Guardando el id, el panel siempre
+  // lee la versión fresca de `products`.
+  const [aiProductId, setAiProductId] = useState<string | undefined>();
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  const {
+    products,
+    loading,
+    error,
+    createProduct,
+    updateProduct,
+    deleteProduct,
+    refetch,
+  } = useProducts();
+
+  const aiProduct = products.find((p) => p.productId === aiProductId);
 
   const handleSaveProduct = async (productData: Omit<Product, 'productId' | 'createdAt' | 'updatedAt'>) => {
     if (editingProduct) {
@@ -50,9 +73,35 @@ function App() {
     setEditingProduct(undefined);
   };
 
+  const handleShowAI = (product: Product) => {
+    setAiProductId(product.productId);
+  };
+
+  // Cualquier escritura de una Lambda de IA en DynamoDB (etiquetas, moderación,
+  // descripción, sentimiento, audio) se refleja recién después de releer el
+  // catálogo: el hook parchea el cache local sólo en el CRUD, no en los
+  // enriquecimientos.
+  const handleEnriched = () => {
+    refetch();
+  };
+
   const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchTerm.toLowerCase());
+    // El filtro incluye el texto TRADUCIDO además del original. Antes sólo
+    // miraba product.name/description, así que en modo EN el usuario escribía lo
+    // que estaba leyendo en pantalla y no encontraba nada.
+    const haystack = [
+      product.name,
+      product.description,
+      product.translations?.es?.name,
+      product.translations?.es?.description,
+      product.translations?.en?.name,
+      product.translations?.en?.description,
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase();
+
+    const matchesSearch = haystack.includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === 'Todos' || product.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
@@ -96,6 +145,19 @@ function App() {
                   EN
                 </button>
               </div>
+              {/* S08 · Asistente de compras (RAG sobre Bedrock) */}
+              <button
+                onClick={() => setIsChatOpen(!isChatOpen)}
+                aria-expanded={isChatOpen}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                  isChatOpen
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <MessageCircle className="w-4 h-4" aria-hidden="true" />
+                Asistente
+              </button>
               {/* Admin Toggle */}
               <button
                 onClick={() => setIsAdmin(!isAdmin)}
@@ -138,6 +200,11 @@ function App() {
             </select>
           </div>
 
+          {/* S07 · Búsqueda semántica. Vive al lado del filtro por texto a
+              propósito: el de arriba compara substrings, este compara SIGNIFICADO
+              vía embeddings, y ver los dos juntos es el punto didáctico. */}
+          <SemanticSearch onSelectProduct={setAiProductId} />
+
           {isAdmin && (
             <button
               onClick={() => setIsModalOpen(true)}
@@ -147,6 +214,10 @@ function App() {
               Agregar Nuevo Producto
             </button>
           )}
+
+          {/* S07 · Indexador. Sólo en modo admin: reescribe el embedding de TODOS
+              los productos y es prerequisito de la búsqueda y del asistente. */}
+          {isAdmin && <AdminAIOps onIndexed={handleEnriched} />}
         </div>
 
         {loading ? (
@@ -180,6 +251,7 @@ function App() {
                 isAdmin={isAdmin}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                onShowAI={handleShowAI}
               />
             ))}
           </div>
@@ -192,6 +264,45 @@ function App() {
         onSave={handleSaveProduct}
         product={editingProduct}
       />
+
+      {/* Todas las capacidades por producto en UN modal: S01 etiquetas, S02
+          moderación + alt-text y S06 descripción los trae ProductAIPanel; S05
+          audio y S03 sentimiento entran como children. */}
+      {aiProduct && (
+        <ProductAIPanel
+          product={aiProduct}
+          isOpen={true}
+          onClose={() => setAiProductId(undefined)}
+          onEnriched={handleEnriched}
+        >
+          <ProductAudio product={aiProduct} />
+          <SentimentPanel product={aiProduct} onAnalyzed={handleEnriched} />
+        </ProductAIPanel>
+      )}
+
+      {/* S08 · Asistente. Panel lateral fijo para que el catálogo siga visible
+          mientras el modelo recomienda: las citas de `retrieved` abren el
+          producto real. */}
+      {isChatOpen && (
+        <aside
+          aria-label="Asistente de compras"
+          className="fixed bottom-0 right-0 z-40 w-full sm:w-[420px] sm:bottom-4 sm:right-4 max-h-[85vh] overflow-y-auto bg-white rounded-t-lg sm:rounded-lg shadow-xl border border-gray-200"
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <h2 className="font-semibold text-gray-900">Asistente TechModa</h2>
+            <button
+              onClick={() => setIsChatOpen(false)}
+              aria-label="Cerrar asistente"
+              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="p-4">
+            <ShoppingAssistant onSelectProduct={setAiProductId} />
+          </div>
+        </aside>
+      )}
 
       <footer className="bg-white border-t mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

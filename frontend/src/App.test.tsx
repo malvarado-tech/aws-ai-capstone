@@ -488,4 +488,81 @@ describe('App Component', () => {
       expect(screen.getByText(/E-commerce de Moda Serverless/i)).toBeInTheDocument();
     });
   });
+
+  // Cableado de las capacidades de IA en App. OJO: acá sólo se mockea `./lib/api`,
+  // así que los componentes de IA usan el `ai.ts` real y en tests window.__ENV no
+  // trae ninguna URL de IA. Eso es deliberado: estos casos prueban que la app
+  // monta y opera con las capacidades APAGADAS, que es el estado de un stack a
+  // medio desplegar. El comportamiento de cada panel con datos se prueba en su
+  // propio archivo.
+  describe('AI capability wiring', () => {
+    it('should render the assistant toggle collapsed by default', () => {
+      render(<App />);
+
+      const toggle = screen.getByRole('button', { name: /asistente/i });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('complementary', { name: /asistente de compras/i })).not.toBeInTheDocument();
+    });
+
+    it('should open and close the assistant panel', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+
+      await user.click(screen.getByRole('button', { name: /asistente/i }));
+
+      const panel = screen.getByRole('complementary', { name: /asistente de compras/i });
+      expect(panel).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /cerrar asistente/i }));
+
+      expect(
+        screen.queryByRole('complementary', { name: /asistente de compras/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it('should open the per-product AI panel from a card', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('button', { name: /ver ia/i }).length).toBeGreaterThan(0);
+      });
+
+      await user.click(screen.getAllByRole('button', { name: /ver ia/i })[0]);
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    });
+
+    // El indexador reescribe el embedding de todo el catálogo: no puede estar a
+    // un click de un cliente.
+    it('should only expose the catalog indexer in admin mode', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+
+      expect(screen.queryByRole('button', { name: /reindexar catálogo/i })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /modo cliente/i }));
+
+      expect(screen.getByRole('button', { name: /reindexar catálogo/i })).toBeInTheDocument();
+    });
+
+    // Regresión: el filtro por texto sólo miraba los campos originales, así que
+    // en modo EN el usuario buscaba lo que estaba leyendo y no encontraba nada.
+    it('should match the translated text when filtering', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Camisa Blanca Clásica')).toBeInTheDocument();
+      });
+
+      // 'Classic White Shirt' sólo existe en translations.en del primer producto.
+      await user.type(screen.getByPlaceholderText(/buscar productos/i), 'Classic White Shirt');
+
+      await waitFor(() => {
+        expect(screen.getByText('Camisa Blanca Clásica')).toBeInTheDocument();
+        expect(screen.queryByText('Jeans Azules')).not.toBeInTheDocument();
+      });
+    });
+  });
 });

@@ -1,4 +1,4 @@
-import { ShoppingCart, Package } from 'lucide-react';
+import { ShoppingCart, Package, Sparkles } from 'lucide-react';
 import type { Product } from '../lib/types';
 
 interface ProductCardProps {
@@ -7,9 +7,22 @@ interface ProductCardProps {
   onEdit?: (product: Product) => void;
   onDelete?: (productId: string) => void;
   isAdmin?: boolean;
+  /**
+   * Abre el panel de IA de este producto. Opcional: si no se pasa, la tarjeta no
+   * muestra el botón y queda igual que antes (así los tests existentes y
+   * cualquier uso sin IA siguen valiendo).
+   */
+  onShowAI?: (product: Product) => void;
 }
 
-export function ProductCard({ product, language = 'es', onEdit, onDelete, isAdmin }: ProductCardProps) {
+export function ProductCard({
+  product,
+  language = 'es',
+  onEdit,
+  onDelete,
+  isAdmin,
+  onShowAI,
+}: ProductCardProps) {
   // Get translated text if available, otherwise fall back to default
   const getName = () => {
     if (language === 'en' && product.translations?.en?.name) {
@@ -36,7 +49,14 @@ export function ProductCard({ product, language = 'es', onEdit, onDelete, isAdmi
       <div className="aspect-square overflow-hidden bg-gray-100">
         <img
           src={product.imageUrl}
-          alt={getName()}
+          // S02 (Rekognition) genera `altText`: una descripción de lo que la imagen
+          // MUESTRA ("Imagen de producto que muestra: Clothing, Shirt, Sleeve").
+          // El nombre del producto no describe la imagen, sólo la nombra, así que
+          // quien usa lector de pantalla no se entera de qué está viendo. Preferir
+          // el alt descriptivo es el entregable de accesibilidad de esa sesión y
+          // entra por el dominio de IA responsable / inclusión del AIF-C01.
+          // Fallback al nombre: `altText` es opcional y sólo existe si se corrió S02.
+          alt={product.altText || getName()}
           className="w-full h-full object-cover"
         />
       </div>
@@ -61,6 +81,15 @@ export function ProductCard({ product, language = 'es', onEdit, onDelete, isAdmi
             <span>{product.stock} disponibles</span>
           </div>
         </div>
+        {onShowAI && (
+          <button
+            onClick={() => onShowAI(product)}
+            className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+          >
+            <Sparkles className="w-4 h-4" aria-hidden="true" />
+            Ver IA
+          </button>
+        )}
         {isAdmin ? (
           <div className="flex gap-2">
             <button

@@ -1,10 +1,25 @@
 import type { Product } from './types';
 
 // Runtime environment configuration (injected at deployment time)
+//
+// Cada Lambda de IA tiene SU PROPIA Function URL, en otro host: no son rutas
+// bajo VITE_API_URL. Por eso hay una clave por sesión. El inyector las escribe
+// desde los Outputs del stack; si una falta, el cliente de `ai.ts` deshabilita
+// esa capacidad en la UI en lugar de fallar.
+// Ver docs/RUNTIME_CONFIG.md — sólo URLs públicas acá, nunca claves.
 declare global {
   interface Window {
     __ENV?: {
       VITE_API_URL?: string;
+      VITE_ENRICH_LABELS_URL?: string;      // S1
+      VITE_MODERATE_IMAGE_URL?: string;     // S2
+      VITE_ANALYZE_SENTIMENT_URL?: string;  // S3
+      VITE_TRANSLATE_CATALOG_URL?: string;  // S4
+      VITE_SYNTHESIZE_VOICE_URL?: string;   // S5
+      VITE_GENERATE_DESCRIPTION_URL?: string; // S6
+      VITE_INDEX_EMBEDDINGS_URL?: string;   // S7 (indexador)
+      VITE_SEMANTIC_SEARCH_URL?: string;    // S7 (búsqueda)
+      VITE_SHOPPING_ASSISTANT_URL?: string; // S8
     };
   }
 }
